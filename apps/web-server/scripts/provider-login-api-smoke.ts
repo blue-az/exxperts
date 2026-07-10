@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { SMOKE_SERVER_SPAWN_TREE_OPTIONS, stopSmokeServer } from "./smoke-server-process.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -53,6 +54,7 @@ async function requestJson(pathname: string, init: RequestInit = {}): Promise<{ 
 try {
 	server = spawn("npx", ["tsx", "src/index.ts"], {
 		shell: process.platform === "win32",
+		...SMOKE_SERVER_SPAWN_TREE_OPTIONS,
 		cwd: webServerDir,
 		env: {
 			...process.env,
@@ -185,8 +187,6 @@ try {
 
 	console.log("provider login API smoke passed");
 } finally {
-	if (server && server.exitCode == null) {
-		server.kill("SIGTERM");
-	}
+	await stopSmokeServer(server);
 	fs.rmSync(tempRoot, { recursive: true, force: true });
 }
