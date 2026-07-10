@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Shim: the SearXNG helper is cross-platform Node now (scripts/searxng.mjs)
+# so it also works from PowerShell/cmd on Windows. This entry point stays for
+# mac/Linux/Git Bash muscle memory and existing docs.
+
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$DIR/searxng.mjs" "$@"

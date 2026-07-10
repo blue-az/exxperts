@@ -1,0 +1,27 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"paths": {
+			"*": ["./*"],
+			"@exxeta/exxperts-ai": ["./packages/ai/src/index.ts"],
+			"@exxeta/exxperts-ai/oauth": ["./packages/ai/src/oauth.ts"],
+			"@exxeta/exxperts-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
+			"@exxeta/exxperts-ai/dist/*": ["./packages/ai/src/*"],
+			"@exxeta/exxperts-core": ["./packages/agent/src/index.ts"],
+			"@exxeta/exxperts-core/*": ["./packages/agent/src/*"],
+			"@exxeta/exxperts-runtime": ["./packages/coding-agent/src/index.ts"],
+			"@exxeta/exxperts-runtime/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
+			"@exxeta/exxperts-runtime/*": ["./packages/coding-agent/src/*"],
+			"typebox": ["./node_modules/typebox"],
+			"@exxeta/exxperts-tui": ["./packages/tui/src/index.ts"],
+			"@exxeta/exxperts-tui/*": ["./packages/tui/src/*"],
+			"@exxeta/exxperts-web-ui": ["./packages/web-ui/src/index.ts"],
+			"@exxeta/exxperts-web-ui/*": ["./packages/web-ui/src/*"],
+			"@exxeta/exxperts-agent-old": ["./packages/agent-old/src/index.ts"],
+			"@exxeta/exxperts-agent-old/*": ["./packages/agent-old/src/*"]
+		}
+	},
+	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
+	"exclude": ["packages/web-ui/**/*", "**/dist/**"]
+}

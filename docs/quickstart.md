@@ -1,0 +1,106 @@
+# Quickstart
+
+Get Exxperts running, connect your AI, and save your first memory — in about five minutes.
+
+Exxperts is a local-first platform for persistent AI colleagues. Each "room" is an agent with durable, governed memory: everything it remembers lives in plain files on your machine, every memory write goes through an approval workflow you control, and the memory belongs to the room — not to any model vendor.
+
+## What you need
+
+- macOS, Windows, or Linux with a terminal. **On Windows, first install Git for Windows (Git Bash is required) and apply the two one-time Git settings from the [README's Windows quickstart](../README.md#windows-quickstart).**
+- Node.js 20.6+ and npm (check with `node --version`; if missing, install the LTS from [nodejs.org](https://nodejs.org)).
+- An AI subscription: **Claude** (Pro/Max) or **ChatGPT Plus/Pro** — or an OpenAI-compatible gateway if you or your org run one.
+
+## 1. Install and run
+
+The same commands work on every platform:
+
+```bash
+git clone https://github.com/EXXETA/exxperts.git
+cd exxperts
+npm install
+npm run install:global   # builds, packs, and installs the exxperts commands
+exxperts web
+```
+
+The web app starts on `http://127.0.0.1:8787` and opens in your browser (if it doesn't, open the URL the command prints). Everything runs locally — the server only listens on your machine.
+
+If `install:global` fails with `ENOTEMPTY`, an older exxperts install is in the way: run `npm uninstall -g @exxeta/exxperts-app`, delete the leftover directory the error names if it survives, and retry. (The tarball it mentions is named after the npm package `@exxeta/exxperts-app` — Exxeta is the company behind exxperts.)
+
+If it fails with `EACCES` on macOS/Linux, use a user-level npm prefix instead of `sudo`:
+
+```bash
+mkdir -p ~/.npm-global
+npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Prefer running straight from the clone without installing commands? `npm run build`, then `./scripts/exxperts-web` (macOS/Linux/Git Bash) or `node bin\exxperts-web.cjs` (Windows).
+
+**Updating later** — from the repo folder: `git pull`, `npm install`, `npm run install:global`. If anything misbehaves, `npm run doctor` checks every layer and prints the fix.
+
+## 2. Connect your AI
+
+Open **AI setup** in the web app.
+
+- **Claude or ChatGPT Plus/Pro:** click **Sign in →** on the provider's card. The provider's login opens in a new browser tab; complete it there and the page updates by itself. Credentials stay on your machine, in the local credential store.
+- **OpenAI-compatible gateway:** run `exxperts setup openai-compatible` in the terminal, then add the API key via the CLI's `/login`. Details: [Provider setup and AI profiles](provider-setup.md).
+
+Signing in is enough — the matching profile activates by itself. You can switch between connected profiles anytime on the same page.
+
+## 3. Create your first room
+
+From Home, create a room. A room is a persistent colleague: it keeps its own memory, workspace, and conversation threads, and it picks a working style at creation.
+
+Try this:
+
+1. Chat normally — ask it to help with something real.
+2. Tell it something worth keeping: *"Remember that I prefer concise summaries."*
+3. When you finish the session, press **Checkpoint** next to the message box. The room distills the conversation into its durable memory — and anything you explicitly asked it to remember is protected through every later compression.
+
+Nothing is memorized silently. Checkpoint proposals apply automatically only when they're clean; anything questionable comes back to you for review. Later, as checkpoints accumulate, the room offers **Learn** (consolidating recent context into stable memory) and **Review Memory** (tidying stable memory) — both approval-gated the same way. The full story: [Memory](memory.md).
+
+## 4. Give the room a workspace (optional)
+
+In the room's settings, set a **workspace folder** — the room's file tools then work inside that folder, with per-tool toggles and two access modes (**Full access** or **Bounded workspace**). Shell access is off by default.
+
+macOS note: if the workspace is in a protected folder (Documents, Desktop, Downloads, iCloud Drive), macOS may block directory listing for the terminal that launched Exxperts. Check from that same terminal:
+
+```bash
+ls ~/Documents | head
+```
+
+If that fails with `Operation not permitted`, grant your terminal access in System Settings → Privacy & Security → Files and Folders, or choose a non-protected folder.
+
+## Where your data lives
+
+| Path | Purpose |
+| --- | --- |
+| `~/.exxperts/app/` | Product state: rooms (memory, events, threads), schedules, usage, artifacts, feature config. |
+| `~/.exxperts/agent/` | Runtime state: provider credentials, model config, CLI sessions. |
+
+Each room is a self-contained folder under `~/.exxperts/app/personalized-agents/<room-id>/` — its constitution, durable memory, full event history with content fingerprints, and saved threads, all in plain files you can read.
+
+## Back up and move your rooms
+
+Because a room is just a folder, backing it up or moving it to another machine is a copy:
+
+1. Finish the session in the room (checkpoint if you want the latest conversation remembered) and close it.
+2. Copy the room's folder — `~/.exxperts/app/personalized-agents/<room-id>/` — to the same path on the other machine (or archive it: `tar -czf my-room.tgz -C ~/.exxperts/app/personalized-agents <room-id>`).
+3. On the other machine, install Exxperts and sign in to the **same provider profile** — saved threads are model-locked, so the room needs a profile that offers its model.
+4. If the room had a workspace, set it again in room settings — workspace grants reference absolute paths on the original machine and don't carry over. The workspace section warns when the saved folder isn't found on this machine.
+
+The room appears on Home automatically; no import step. Copying all of `~/.exxperts/` backs up everything, credentials included — treat that copy as sensitive.
+
+## Uninstall
+
+Stop the server with `Ctrl-C`. If you installed the package globally: `npm uninstall -g @exxeta/exxperts-app`. Your rooms and credentials stay in `~/.exxperts/` — delete that folder only if you want to erase all local product state.
+
+## Going further
+
+- [How Exxperts works](how-exxperts-works.md) — the architecture: rooms, prompt layers, and the approval-gated memory lifecycle.
+- [Memory](memory.md) — the full memory model and who approves what.
+- [Provider setup and AI profiles](provider-setup.md) — all provider paths in detail.
+- [MCP client support](mcp.md) — connect MCP tool servers.
+- [Web search](web-search.md) — optional local SearXNG search.
+- CLI/TUI: `exxperts cli` (or `./scripts/exxperts-cli`) opens the terminal experience, sharing the same rooms and credentials.

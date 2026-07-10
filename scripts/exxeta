@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Development shim for the packaged exxperts CLI launcher.
+
+set -euo pipefail
+
+EXXETA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export EXXETA_HOME
+
+exec node "$EXXETA_HOME/bin/exxperts.cjs" "$@"

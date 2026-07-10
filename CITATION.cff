@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you reference exxperts in your work, please cite it as below."
+title: "exxperts"
+type: software
+authors:
+  - family-names: "Odriozola Schick"
+    given-names: "Borja"
+  - family-names: "Pastor Alonso"
+    given-names: "Fernando"
+abstract: "Persistent AI rooms with governed, approval-gated memory — a local-first agent platform where memory lives as plain files on the user's machine, every memory write goes through an approval workflow the user controls, and memory belongs to the room rather than any model vendor."
+repository-code: "https://github.com/EXXETA/exxperts"

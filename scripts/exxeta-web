@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Start the Exxperts web server + Vite UI together and open the browser.
+# Stops both when you Ctrl+C. The implementation lives in the cross-platform
+# Node script exxeta-web.mjs; this shim keeps the historical entry point.
+
+set -euo pipefail
+
+EXXETA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export EXXETA_HOME
+
+exec node "$EXXETA_HOME/scripts/exxeta-web.mjs" "$@"

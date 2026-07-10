@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.exxeta-cache/
+.exxperts-cache/
+*.log
+*.tgz
+.DS_Store
+
+# Personal AI-session context (each contributor can have their own)
+AGENTS.md
+.claude/
+
+# Obsidian editor config (personal)
+.obsidian/
+
+# Private working docs kept outside the repo
+*-private/

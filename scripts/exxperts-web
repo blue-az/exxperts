@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Development shim for the explicit Exxperts web dev launcher.
+
+set -euo pipefail
+
+EXXETA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export EXXETA_HOME
+export EXXPERTS_WEB_COMMAND_NAME="./scripts/exxperts-web"
+
+exec "$EXXETA_HOME/scripts/exxeta-web" "$@"
