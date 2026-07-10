@@ -8,6 +8,7 @@
 <h3 align="center">Your AI's memory. On your machine, under your control.</h3>
 
 <p align="center">
+  <a href="https://github.com/EXXETA/exxperts/actions/workflows/ci.yml"><img src="https://github.com/EXXETA/exxperts/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue" alt="License: PolyForm Noncommercial" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520.6-brightgreen" alt="Node.js 20.6+" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="macOS, Windows, Linux" />
