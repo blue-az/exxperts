@@ -214,7 +214,7 @@ try {
 	assert(Array.isArray(changedDefault.body?.warnings) && changedDefault.body.warnings.length === 1, "changed default should report preservation warning");
 	assert(fs.existsSync(legacySidecarPath), "changing default should snapshot current default into legacy active thread sidecar before mutation");
 	const legacySidecarJson = fs.readFileSync(legacySidecarPath, "utf-8");
-	assert(legacySidecarJson.includes(workspaceRoot), "legacy active thread sidecar should preserve original default root");
+	assert(legacySidecarJson.includes(JSON.stringify(workspaceRoot).slice(1, -1)), "legacy active thread sidecar should preserve original default root");
 	assert(legacySidecarJson.includes('"bashEnabled": true'), "legacy active thread sidecar should preserve original default bash setting before mutation");
 	assert(!legacySidecarJson.includes(changedWorkspaceRoot), "legacy active thread sidecar must not be rewritten to changed default root");
 	const changedDefaultJson = fs.readFileSync(defaultPath, "utf-8");

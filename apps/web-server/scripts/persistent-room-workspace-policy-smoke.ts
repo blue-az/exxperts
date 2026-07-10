@@ -97,7 +97,7 @@ try {
 	assert(policyPath === path.join(agentRoot, "runtime", "workspace-policies", "c_workspace_policy_smoke.json"), "policy should be stored as persistent-agent runtime sidecar");
 	assert(fs.existsSync(policyPath), "policy sidecar should be written");
 	const storedPolicyJson = fs.readFileSync(policyPath, "utf-8");
-	assert(storedPolicyJson.includes(workspaceRoot), "server-side sidecar should retain raw workspace path for enforcement");
+	assert(storedPolicyJson.includes(JSON.stringify(workspaceRoot).slice(1, -1)), "server-side sidecar should retain raw workspace path for enforcement");
 	const restoredPolicy = readPersistentRoomCapabilityPolicy(agentId, "c_workspace_policy_smoke", { persistentAgentsRoot });
 	assert(restoredPolicy?.roots[0]?.realpath === fs.realpathSync.native(workspaceRoot), "stored policy should round-trip root realpath");
 	assert(restoredPolicy?.workspaceAccessMode === "bounded", "stored policy should round-trip workspace access mode");
@@ -154,7 +154,7 @@ try {
 	assert(fs.existsSync(defaultPolicyPath), "room-default policy should be written");
 	assert(!fs.existsSync(defaultSentinelSidecarPath), "room-default policy must not create a workspace-policies/room_default.json sidecar");
 	const storedDefaultPolicyJson = fs.readFileSync(defaultPolicyPath, "utf-8");
-	assert(storedDefaultPolicyJson.includes(defaultWorkspaceRoot), "server-side room-default policy should retain raw workspace path for enforcement");
+	assert(storedDefaultPolicyJson.includes(JSON.stringify(defaultWorkspaceRoot).slice(1, -1)), "server-side room-default policy should retain raw workspace path for enforcement");
 	const defaultViewJson = JSON.stringify(persistentRoomCapabilityPolicyView(defaultPolicy));
 	assert(!defaultViewJson.includes(defaultWorkspaceRoot), "room-default policy view must not expose raw workspace path");
 	const resolvedDefault = resolvePersistentRoomCapabilityPolicy(agentId, "c_workspace_policy_smoke", { persistentAgentsRoot });

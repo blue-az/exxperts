@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "exxeta-l1a-upgrade-home-"));
 const tempAgentsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "exxeta-l1a-upgrade-root-"));
@@ -121,7 +122,7 @@ try {
 	assert(readText(l1aPath) === LEGACY_V1_L1A, "refused upgrade must not modify L1a");
 	fs.writeFileSync(runtimeStatePath, JSON.stringify(runtimeState, null, 2) + "\n");
 
-	const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
+	const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 	const roomLock = (await import("node:module")).createRequire(import.meta.url)(path.join(repoRoot, "bin", "lib", "room-lock.cjs"));
 	const lockOwner = { surface: "cli", pid: process.pid, host: os.hostname() };
 	const acquired = roomLock.tryAcquire(agentId, lockOwner);

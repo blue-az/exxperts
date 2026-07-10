@@ -51,8 +51,11 @@ try {
 	// File location and mode.
 	const settingsPath = persistentRoomMaintenanceSettingsPath(agentId);
 	assert(settingsPath === path.join(root, agentId, "runtime", "maintenance-settings.json"), "settings file should live under the room runtime dir");
-	const mode = fs.statSync(settingsPath).mode & 0o777;
-	assert(mode === 0o600, `settings file should be 0600, got ${mode.toString(8)}`);
+	if (process.platform !== "win32") {
+		// POSIX only: Windows has no file-mode bits, stat reports 666 regardless.
+		const mode = fs.statSync(settingsPath).mode & 0o777;
+		assert(mode === 0o600, `settings file should be 0600, got ${mode.toString(8)}`);
+	}
 
 	// Toggle back off.
 	writePersistentRoomMaintenanceSettings(agentId, { fastPathSecondApproval: false });
