@@ -89,15 +89,27 @@ console.log(`[exxperts] installing ${filename} globally…`);
 // allow-scripts name entries only match registry deps; a local tarball is
 // matched by its exact path, so the tarball path itself must be an entry or
 // the package's own postinstall is silently skipped.
-const npmVersion = spawnSync("npm", ["--version"], { cwd: root, encoding: "utf8", shell });
-const npmMajor = Number.parseInt(npmVersion.stdout ?? "", 10);
-const tarball = path.join(root, filename);
-const installArgs = ["install", "-g", tarball];
-if (npmMajor >= 12) {
-	const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-	const scriptAllows = [tarball, pkg.name, ...Object.keys(pkg.allowScripts ?? {})];
-	installArgs.push("--allow-remote=all", ...scriptAllows.map((entry) => `--allow-scripts=${entry}`));
+// Version detection: under `npm run`, the parent npm always sets
+// npm_config_user_agent ("npm/12.0.1 node/…"), which survives shell and PATH
+// differences that a spawned `npm --version` may not.
+function detectNpm() {
+	const agentMatch = (process.env.npm_config_user_agent ?? "").match(/\bnpm\/(\d+[^ ]*)/);
+	if (agentMatch) return agentMatch[1];
+	const probe = spawnSync("npm", ["--version"], { cwd: root, encoding: "utf8", shell });
+	return (probe.stdout ?? "").trim();
 }
-run(installArgs);
+// The gates ship in npm >= 11.14 as well as npm 12 (a live install on
+// 11.16 taught us that), so the allow settings are passed UNCONDITIONALLY:
+// npms without the gates accept the unknown config with at worst a warning
+// (verified on 10.9 and 11.11), gated npms need it. CLI flags plus the same
+// values via environment, so a shell layer dropping one leaves the other.
+const npmVersionString = detectNpm();
+const tarball = path.join(root, filename);
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const scriptAllows = [tarball, pkg.name, ...Object.keys(pkg.allowScripts ?? {})];
+const installArgs = ["install", "-g", tarball, "--allow-remote=all", ...scriptAllows.map((entry) => `--allow-scripts=${entry}`)];
+const installEnv = { ...process.env, npm_config_allow_remote: "all", npm_config_allow_scripts: scriptAllows.join(",") };
+console.log(`[exxperts] npm ${npmVersionString || "(version not detected)"}: allowing the tarball's remote dependency and install scripts for the global step`);
+run(installArgs, { env: installEnv });
 
 console.log("[exxperts] done — run: exxperts web  (web app)  or: exxperts cli  (CLI/TUI)");

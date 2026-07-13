@@ -45,6 +45,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # The install gates ship in npm >= 11.14 too (bundled with current
+        # Node 24 installers), not only npm 12 — a live Windows install on
+        # npm 11.16 hit EALLOWREMOTE while this job was green on 12.
+        npm: ["11", "12"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
@@ -59,8 +63,8 @@ jobs:
         with:
           node-version: latest
 
-      - name: Use npm 12
-        run: npm install -g npm@12
+      - name: Use npm ${{ matrix.npm }}
+        run: npm install -g npm@${{ matrix.npm }}
 
       - name: Fresh install with npm 12 defaults
         run: |
