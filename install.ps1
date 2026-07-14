@@ -73,6 +73,54 @@ function Test-Prerequisites {
     }
 }
 
+# Fail early, with a plain-language message, when the network cannot reach the
+# repo host at all (offline, DNS broken, firewall). Invoke-WebRequest uses the
+# system (WinINET) proxy, so a working corporate proxy setup passes this probe;
+# an HTTP error status still proves the host is reachable.
+function Test-Network {
+    $repoHost = ([uri]$script:RepoUrl).Host
+    if (-not $repoHost) { return }
+    $reachable = $false
+    try {
+        Invoke-WebRequest -Uri "https://$repoHost" -Method Head -UseBasicParsing -TimeoutSec 20 *> $null
+        $reachable = $true
+    }
+    catch {
+        # A response object means the host answered (e.g. 403/405 on HEAD).
+        if ($_.Exception.PSObject.Properties["Response"] -and $_.Exception.Response) { $reachable = $true }
+    }
+    if (-not $reachable) {
+        $proxyState = "no proxy variables are set"
+        if ($env:HTTPS_PROXY) { $proxyState = "HTTPS_PROXY is set to '$($env:HTTPS_PROXY)'" }
+        Fail ("cannot reach https://$repoHost, so the install cannot download anything.`n" +
+            "Check your internet connection. If this network needs a proxy, set it first`n" +
+            "(currently $proxyState), then re-run this command.")
+    }
+}
+
+# A fresh install writes roughly 3 GB: the clone with node_modules, the npm
+# cache, and a second copy under the global npm prefix. Say so up front
+# instead of letting npm die minutes in with a confusing ENOSPC or a locked-
+# file error that looks like something else.
+function Test-DiskSpace([string]$Dir) {
+    try {
+        $qualifier = Split-Path -Qualifier $Dir
+        if (-not $qualifier) { $qualifier = Split-Path -Qualifier $HOME }
+        $free = (Get-PSDrive -Name $qualifier.TrimEnd(":")).Free
+    }
+    catch { return }
+    if ($null -eq $free) { return }
+    $freeGB = [math]::Round($free / 1GB, 1)
+    if ($free -lt 1GB) {
+        Fail ("not enough free disk space: $freeGB GB available where $Dir lives,`n" +
+            "but a fresh install needs about 3 GB (clone, build, npm cache, installed copy).`n" +
+            "Free up some space, then re-run this command.")
+    }
+    if ($free -lt 4GB) {
+        Say "heads up: only $freeGB GB free where $Dir lives; a fresh install uses about 3 GB."
+    }
+}
+
 # Bring an existing clone up to date. Skips quietly when the clone has no
 # upstream branch to pull from (e.g. a CI checkout on a detached commit).
 function Update-Clone([string]$Dir) {
@@ -105,6 +153,9 @@ function Install-Exxperts {
 
     $dir = Resolve-InstallDir
 
+    Test-Network
+    Test-DiskSpace $dir
+
     if (Test-ExxpertsClone $dir) {
         Update-Clone $dir
     }
@@ -129,14 +180,18 @@ function Install-Exxperts {
         Say "installing dependencies (npm install) ..."
         & npm.cmd install
         if ($LASTEXITCODE -ne 0) {
-            Fail "npm install failed. From $dir, run 'npm run doctor'; it checks every layer and prints the fix."
+            Fail ("npm install failed. From $dir, run 'npm run doctor'; it checks every layer and prints the fix.`n" +
+                "If the error above mentions EPERM, EBUSY, or a file in use, an antivirus is likely`n" +
+                "scanning the install as it runs; add an exclusion for $dir, then re-run this command.")
         }
 
         Say "building and installing the exxperts command (npm run install:global) ..."
         Say "this builds the whole app; give it a few minutes."
         & npm.cmd run install:global
         if ($LASTEXITCODE -ne 0) {
-            Fail "the build-and-install step failed. From $dir, run 'npm run doctor'; it checks every layer and prints the fix."
+            Fail ("the build-and-install step failed. From $dir, run 'npm run doctor'; it checks every layer and prints the fix.`n" +
+                "If the error above mentions EPERM, EBUSY, or a file in use, an antivirus is likely`n" +
+                "scanning the install as it runs; add an exclusion for $dir, then re-run this command.")
         }
     }
     finally {

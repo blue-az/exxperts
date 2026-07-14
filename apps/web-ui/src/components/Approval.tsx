@@ -60,19 +60,6 @@ function splitFencedBrief(text?: string): { facts: string; label: string; brief:
 	};
 }
 
-/**
- * Chip label for the delegation family, parsed from the server-composed
- * question ("Have a specialist create a slide deck?" → "Slide deck
- * specialist"). The title format is pinned by delegate-task-smoke; a parse
- * miss falls back to the generic approval chrome, never breaks.
- */
-function specialistChipLabel(title: string): string | null {
-	const match = title.match(/^Have a specialist create (?:a|an) (.+)\?$/);
-	if (!match) return null;
-	const noun = match[1];
-	return `${noun.charAt(0).toUpperCase()}${noun.slice(1)} specialist`;
-}
-
 function ApprovalImpl({ item, onResolve, onPreview }: Props) {
 	const [text, setText] = useState("");
 	const [detailsOpen, setDetailsOpen] = useState(false);
@@ -86,14 +73,25 @@ function ApprovalImpl({ item, onResolve, onPreview }: Props) {
 	}, [item.requestId, preview, onPreview]);
 
 	if (item.done) {
+		// Resolved approvals fold to one quiet line: the decision is chat
+		// history, not a live card. The verdict comes from the resolution label
+		// ("Yes"/"No"/an option/"Submitted"); an unmapped label falls back to
+		// naming the choice, never hides it.
+		const done = item.done;
+		const declined = /^(no\b|cancel|decline)/i.test(done);
+		const verdict = /^(yes\b|approve)/i.test(done)
+			? "You approved:"
+			: declined
+				? "You declined:"
+				: /^(submitted|\(empty\))/i.test(done)
+					? "You answered:"
+					: `You chose ${done}:`;
 		return (
 			<div className="approval-row">
-				<div className="approval-card resolved">
-					<div className="approval-head">
-						<span className="approval-tag">your decision</span>
-						<span className="approval-title">{item.title}</span>
-					</div>
-					<div className="approval-resolved">→ {item.done}</div>
+				<div className="approval-resolved-line">
+					<span className="approval-resolved-mark" aria-hidden="true">{declined ? "✕" : "✓"}</span>
+					<span className="approval-resolved-verdict">{verdict}</span>
+					<span className="approval-resolved-title">{item.title}</span>
 				</div>
 			</div>
 		);
@@ -102,21 +100,16 @@ function ApprovalImpl({ item, onResolve, onPreview }: Props) {
 	const tag =
 		item.uiKind === "confirm" ? "approve?" : item.uiKind === "select" ? "your call" : "your input";
 	const metadata = preview ? approvalMetadata(item.title, item.detail || item.message) : [];
-	// Delegate approvals wear the delegation family's chrome (lila chip +
-	// accent edge) so ask → running → done → kept reads as one object.
-	const chip = fenced ? specialistChipLabel(item.title) : null;
 
 	return (
 		<div className="approval-row">
-			<div className={`approval-card${chip ? " delegate" : ""}`}>
-				{chip ? (
-					<>
-						<div className="approval-head">
-							<span className="consult-chip">{chip}</span>
-							<span className="approval-delegate-sub">wants to start</span>
-						</div>
-						<div className="approval-title approval-question">{item.title}</div>
-					</>
+			<div className={`approval-card${fenced ? " delegate" : ""}`}>
+				{fenced ? (
+					// The delegate approval is just the question: it already names the
+					// actor ("Have a specialist create ..."), so a chip and a "wants to
+					// start" subline would say the same thing twice. The lila accent
+					// edge alone carries the family identity.
+					<div className="approval-title approval-question">{item.title}</div>
 				) : (
 					<div className="approval-head">
 						<span className="approval-tag">{tag}</span>

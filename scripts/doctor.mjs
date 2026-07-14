@@ -7,6 +7,7 @@
 // Runs with plain node so it works even when `npm install` has not completed —
 // every check degrades to a ✗ with instructions instead of crashing.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,7 +31,26 @@ const warn = (label, hint) => {
 	if (hint) console.log(`      ${hint}`);
 };
 
-console.log("exxperts doctor\n");
+// npm version: under `npm run doctor` the parent npm always sets
+// npm_config_user_agent; fall back to spawning npm when run directly.
+const npmVersion = (() => {
+	const agentMatch = (process.env.npm_config_user_agent ?? "").match(/\bnpm\/(\d+[^ ]*)/);
+	if (agentMatch) return agentMatch[1];
+	const probe = spawnSync("npm", ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+	return (probe.stdout ?? "").trim() || null;
+})();
+
+// Environment header: the npm-gates week was debugged from screenshots, so
+// doctor's output alone should identify the environment.
+{
+	const proxyVars = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"]
+		.filter((name) => process.env[name])
+		.map((name) => `${name}=${process.env[name]}`);
+	console.log("exxperts doctor");
+	console.log(`  node ${process.version} | npm ${npmVersion ?? "(not detected)"} | ${process.platform} ${process.arch}`);
+	console.log(`  proxy: ${proxyVars.length ? proxyVars.join(" ") : "no proxy environment variables set"}`);
+	console.log("");
+}
 
 // fetch failures wrap the interesting code one or two levels deep (TypeError →
 // cause, which is an AggregateError when a host resolves to several addresses).
@@ -51,6 +71,110 @@ const searxngStartHint = isWindows
 		ok(`Node ${process.version}`, `requires >=${required}`);
 	} else {
 		bad(`Node ${process.version} is older than the required >=${required}`, "install a newer Node (https://nodejs.org) and re-run npm install");
+	}
+}
+
+// --- npm / Node compatibility ---------------------------------------------------
+// npm 12 refuses to run on Node outside its engines range (^22.22.2 || ^24.15.0
+// || >=26) and hard-fails mid-install. The one-line installers preflight this;
+// the manual install path and later updates land here instead.
+if (npmVersion) {
+	const npmMajor = Number(npmVersion.split(".")[0]);
+	const [major, minor, patch] = process.versions.node.split(".").map(Number);
+	if (npmMajor >= 12) {
+		const nodeOk = major >= 26
+			|| (major === 24 && minor >= 15)
+			|| (major === 22 && (minor > 22 || (minor === 22 && patch >= 2)));
+		if (nodeOk) {
+			ok(`npm ${npmVersion} is compatible with this Node`);
+		} else {
+			bad(
+				`npm ${npmVersion} requires Node 22.22.2+, 24.15+ (within 24.x), or 26+, but this is Node ${process.version}; npm will hard-fail mid-install`,
+				"update Node from https://nodejs.org (or downgrade npm: npm install -g npm@11)",
+			);
+		}
+	} else {
+		ok(`npm ${npmVersion}`);
+	}
+}
+
+// --- Disk space ------------------------------------------------------------------
+{
+	try {
+		const stat = fs.statfsSync(root);
+		const freeBytes = stat.bavail * stat.bsize;
+		const freeGB = freeBytes / 1024 ** 3;
+		if (freeGB < 1) {
+			bad(
+				`only ${freeGB.toFixed(1)} GB free on this disk; installs and updates need about 3 GB and will die mid-way`,
+				"free up disk space, then re-run the install",
+			);
+		} else if (freeGB < 3) {
+			warn(`only ${freeGB.toFixed(1)} GB free on this disk; a full install/update uses about 3 GB`);
+		} else {
+			ok(`disk space (${freeGB.toFixed(0)} GB free)`);
+		}
+	} catch {
+		// statfs unavailable on this platform/filesystem; not worth failing over
+	}
+}
+
+// --- Clone owned by this user (a past sudo run leaves root-owned files) ----------
+{
+	const probes = [root, path.join(root, ".git"), path.join(root, "node_modules")].filter((p) => fs.existsSync(p));
+	const blocked = probes.filter((p) => {
+		try {
+			fs.accessSync(p, fs.constants.W_OK);
+			return false;
+		} catch {
+			return true;
+		}
+	});
+	if (blocked.length === 0) {
+		ok("clone is writable by this user");
+	} else {
+		bad(
+			`not writable by this user: ${blocked.join(", ")} (usually left behind by a sudo'd install)`,
+			`take the clone back: sudo chown -R "$(id -un)" "${root}"  then re-run the install without sudo`,
+		);
+	}
+}
+
+// --- Global npm prefix writable (final `npm install -g` step) --------------------
+if (!isWindows) {
+	const prefixRes = spawnSync("npm", ["config", "get", "prefix"], { encoding: "utf8" });
+	const prefix = prefixRes.status === 0 ? (prefixRes.stdout ?? "").trim() : "";
+	if (prefix) {
+		const probe = [path.join(prefix, "lib", "node_modules"), path.join(prefix, "lib"), prefix].find((p) => fs.existsSync(p));
+		let writable = true;
+		if (probe) {
+			try {
+				fs.accessSync(probe, fs.constants.W_OK);
+			} catch {
+				writable = false;
+			}
+		}
+		if (writable) {
+			ok(`global npm prefix writable (${prefix})`);
+		} else {
+			bad(
+				`npm's global prefix (${prefix}) is not writable, so "npm install -g" will fail with EACCES; do NOT use sudo`,
+				"switch npm to a user-level prefix (mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global, add ~/.npm-global/bin to PATH); details: docs/packaging-local.md",
+			);
+		}
+	}
+}
+
+// --- Git long paths (Windows: node_modules trees exceed MAX_PATH) ----------------
+if (isWindows) {
+	const res = spawnSync("git", ["-C", root, "config", "--get", "core.longpaths"], { encoding: "utf8", shell: true });
+	if ((res.stdout ?? "").trim() === "true") {
+		ok("git core.longpaths enabled in this clone");
+	} else {
+		warn(
+			"git core.longpaths is not enabled in this clone; deep node_modules paths can exceed Windows' 260-character limit",
+			"run: git config core.longpaths true  (from this folder)",
+		);
 	}
 }
 
@@ -97,6 +221,37 @@ let depsInstalled = true;
 		depsInstalled = false;
 		bad(`npm dependencies missing (${missing.join(", ")})`, "run `npm install` from the repo root");
 	}
+}
+
+// --- xlsx (the one dependency fetched from cdn.sheetjs.com, not the npm registry;
+// corporate proxies that block that host make npm install fail on exactly this) ---
+{
+	let xlsxInstalled = true;
+	try {
+		require.resolve("xlsx");
+	} catch {
+		xlsxInstalled = false;
+	}
+	if (xlsxInstalled) {
+		ok("xlsx installed (spreadsheet support)");
+	} else if (depsInstalled) {
+		let cdnReachable = false;
+		try {
+			const res = await fetch("https://cdn.sheetjs.com/", { method: "HEAD", signal: AbortSignal.timeout(10_000) });
+			cdnReachable = res.status > 0;
+		} catch {
+			cdnReachable = false;
+		}
+		if (cdnReachable) {
+			bad("xlsx is missing although other dependencies installed", "run `npm install` from the repo root");
+		} else {
+			bad(
+				"xlsx is missing and https://cdn.sheetjs.com is not reachable from here; xlsx is the one dependency that comes from that CDN instead of the npm registry, and this network (proxy/firewall) appears to block it",
+				"ask IT to allow cdn.sheetjs.com, or run `npm install` once on a network that can reach it, then re-run the install",
+			);
+		}
+	}
+	// deps missing entirely: the dependencies check above already said "npm install"
 }
 
 // --- Runtime built ------------------------------------------------------------

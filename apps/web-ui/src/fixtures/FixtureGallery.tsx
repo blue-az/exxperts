@@ -173,6 +173,19 @@ function InRoomChatFixtureScreen({ fixture, theme }: { fixture: InRoomChatFixtur
 	const composerPlaceholder = fixture.composerPlaceholder ?? (fixture.busy ? "Working… Enter to queue" : `Ask ${fixture.activeDisplay}…`);
 	const onSend = (_text: string) => false;
 	const onResolveApproval = (_requestId: string, _value: any, _label: string) => {};
+	const taskDock = fixture.taskDock ? (
+		<TaskDock
+			state={{ ...TASK_FIXTURE_BASE, minimized: fixture.taskDock === "running-strip" }}
+			onMinimize={noop}
+			onOpen={noop}
+			onStop={noop}
+			onDismiss={noop}
+			onTransfer={noop}
+			onIterateSubmit={() => true}
+			iteratePending={false}
+			iterateNotice={null}
+		/>
+	) : undefined;
 
 	return (
 		<InRoomChatShellView
@@ -203,6 +216,7 @@ function InRoomChatFixtureScreen({ fixture, theme }: { fixture: InRoomChatFixtur
 			draftResetKey={fixture.id}
 			onResolveApproval={onResolveApproval}
 			onApprovalPreview={noop}
+			aboveComposerSlot={taskDock}
 		/>
 	);
 }
@@ -244,6 +258,7 @@ const TASK_FIXTURE_STOPPED: TaskState = {
 function TaskCardsFixtureScreen({ fixture }: { fixture: TaskCardsFixtureState }) {
 	void fixture;
 	const stack = [
+		{ key: "running-strip", state: { ...TASK_FIXTURE_BASE, minimized: true } },
 		{ key: "running", state: TASK_FIXTURE_BASE },
 		{ key: "done", state: TASK_FIXTURE_DONE },
 		{ key: "stopped", state: TASK_FIXTURE_STOPPED },

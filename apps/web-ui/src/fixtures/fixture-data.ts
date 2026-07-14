@@ -342,6 +342,8 @@ export interface InRoomChatFixtureState {
 	contextHealth?: ContextHealthStatus | null;
 	topbarActions?: InRoomChatActionItem[];
 	composerRightActions?: InRoomChatActionItem[];
+	/** Docks a running specialist task above the composer: the expanded card or the folded strip. */
+	taskDock?: "running-card" | "running-strip";
 }
 
 export interface TaskCardsFixtureState {
@@ -718,6 +720,24 @@ const approvalItems: ChatItem[] = [
 	},
 	{
 		kind: "approval",
+		id: "fixture-approval-resolved-approved",
+		requestId: "fixture-approval-resolved-approved-request",
+		uiKind: "confirm",
+		title: "Have a specialist create a slide deck?",
+		message: "Approved requests fold to a single quiet line in the chat record.",
+		done: "Yes",
+	},
+	{
+		kind: "approval",
+		id: "fixture-approval-resolved-declined",
+		requestId: "fixture-approval-resolved-declined-request",
+		uiKind: "confirm",
+		title: "Save this draft to the workspace?",
+		message: "Declined requests keep the same quiet line with the decline mark.",
+		done: "No",
+	},
+	{
+		kind: "approval",
 		id: "fixture-approval-delegate",
 		requestId: "fixture-approval-delegate-request",
 		uiKind: "confirm",
@@ -777,6 +797,34 @@ export const inRoomChatFixtureStates: InRoomChatFixtureState[] = [
 		items: activeConversationItems,
 		inputValue: "",
 		composerRightActions: [{ label: "Memento" }, { label: "Checkpoint" }],
+	}),
+	chatFixture({
+		id: "in-room-task-dock-card",
+		label: "In-room / running task dock (card)",
+		description: "Expanded running specialist card docked above the composer; the messages fade at the dock boundary.",
+		activeDisplay: "Strategy Room",
+		ownerSecondary: "Persistent room · specialist running",
+		busy: false,
+		usage: activeChatUsage,
+		contextHealth: contextHealthGreen,
+		items: [...activeConversationItems, ...markdownStressItems],
+		inputValue: "",
+		composerRightActions: [{ label: "Memento" }, { label: "Checkpoint" }],
+		taskDock: "running-card",
+	}),
+	chatFixture({
+		id: "in-room-task-dock-strip",
+		label: "In-room / running task dock (strip)",
+		description: "Running specialist folded to the one-line strip above the composer: chip, latest status, spinner, Stop.",
+		activeDisplay: "Strategy Room",
+		ownerSecondary: "Persistent room · specialist running",
+		busy: false,
+		usage: activeChatUsage,
+		contextHealth: contextHealthGreen,
+		items: [...activeConversationItems, ...markdownStressItems],
+		inputValue: "",
+		composerRightActions: [{ label: "Memento" }, { label: "Checkpoint" }],
+		taskDock: "running-strip",
 	}),
 	chatFixture({
 		id: "in-room-context-health-yellow",

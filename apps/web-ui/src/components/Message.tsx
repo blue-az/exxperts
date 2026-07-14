@@ -303,7 +303,7 @@ function TaskThreadArtifact({ item, artifact, isFirst, onOpen }: { item: TaskCha
 export function TaskThreadItem({ item, onOpenTaskArtifact }: { item: TaskChatItem; onOpenTaskArtifact?: (taskId: string, relativePath: string) => void }) {
 	const contentId = useId();
 	// Same shape as the done card: the specialist's narration folds to zero
-	// lines behind a "Specialist notes" toggle; the artifact is the item.
+	// lines behind a "Details" toggle; the artifact is the item.
 	const [notesOpen, setNotesOpen] = useState(false);
 	const summary = item.summary ?? "";
 	const footerDate = formatTaskDate(item.generatedAt);
@@ -311,13 +311,13 @@ export function TaskThreadItem({ item, onOpenTaskArtifact }: { item: TaskChatIte
 
 	return (
 		<div className="task-item">
+			{/* One plain grey label line; no chip, and no title line (the title is
+			    the brief's first line capped server-side at 80 chars, always a
+			    cut-off echo; the artifact and the notes identify the result). */}
 			<div className="head-row">
-				<span className="task-item-chip">{item.templateLabel} specialist</span>
+				<span className="task-who">{item.templateLabel} specialist</span>
 				<span className="task-item-sub">delegated from this room</span>
 			</div>
-			{item.title && (
-				<div className="task-item-title">{item.title}</div>
-			)}
 			{item.artifacts.length > 0 && (
 				<div className="task-artifact-strip">
 					{item.artifacts.map((artifact, index) => (
@@ -328,7 +328,7 @@ export function TaskThreadItem({ item, onOpenTaskArtifact }: { item: TaskChatIte
 			{summary && (
 				<div className="task-notes">
 					<button type="button" className="task-notes-toggle" aria-expanded={notesOpen} aria-controls={contentId} onClick={() => setNotesOpen((value) => !value)}>
-						<span className="task-notes-tri">{notesOpen ? "▾" : "▸"}</span> Specialist notes
+						{notesOpen ? "Hide details" : "Details"}
 					</button>
 					{notesOpen && (
 						<div id={contentId} className="task-summary md">

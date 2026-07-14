@@ -527,10 +527,12 @@ export function InRoomChatShellView({
 	aboveComposerSlot,
 }: InRoomChatShellViewProps) {
 	const messagesElRef = useRef<HTMLDivElement | null>(null);
+	const dockElRef = useRef<HTMLDivElement | null>(null);
 	const autoFollowRef = useRef(true);
 	const lastItemIdRef = useRef<string | null>(null);
 	const lastScrollTopRef = useRef(0);
 	const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+	const [dockPresent, setDockPresent] = useState(false);
 	const lastItem = items[items.length - 1];
 	// Busy spans the whole turn (agent_start -> agent_end). Thinking phases
 	// and gaps between tool calls used to read as dead air because the
@@ -582,6 +584,35 @@ export function InRoomChatShellView({
 		setShowJumpToLatest(false);
 	}, []);
 
+	// The above-composer dock (consult / task card) shares the column with the
+	// messages: when it mounts or grows it shrinks the scroll area from below,
+	// which used to cut the latest message mid-line. Observe the messages box
+	// and the dock slot, and re-pin to the bottom while auto-following (or
+	// refresh the jump-to-latest affordance otherwise). The re-pin runs now AND
+	// on the next frame: WebKit can deliver the observation while the scroll
+	// geometry still reflects the previous layout, which would clamp the write.
+	useEffect(() => {
+		const el = messagesElRef.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const dock = dockElRef.current;
+		const pinOrRefresh = () => {
+			if (autoFollowRef.current) {
+				el.scrollTop = el.scrollHeight;
+				lastScrollTopRef.current = el.scrollTop;
+			} else {
+				setShowJumpToLatest((wasShowing) => shouldShowJumpToLatest(el, wasShowing, empty));
+			}
+		};
+		const observer = new ResizeObserver(() => {
+			if (dock) setDockPresent(dock.offsetHeight > 0);
+			pinOrRefresh();
+			requestAnimationFrame(pinOrRefresh);
+		});
+		observer.observe(el);
+		if (dock) observer.observe(dock);
+		return () => observer.disconnect();
+	}, [empty, aboveComposerSlot != null]);
+
 	useLayoutEffect(() => {
 		const el = messagesElRef.current;
 		if (!el) return;
@@ -622,7 +653,7 @@ export function InRoomChatShellView({
 					</div>
 
 					{beforeMessagesSlot}
-					<div className="messages-frame">
+					<div className={`messages-frame${dockPresent ? " with-dock" : ""}`}>
 						<div className="messages" ref={setMessagesNode} onScroll={handleMessagesScroll} data-has-unseen-latest={showJumpToLatest ? "true" : undefined}>
 							<TranscriptItems
 								items={items}
@@ -642,7 +673,11 @@ export function InRoomChatShellView({
 							</button>
 						)}
 					</div>
-					{aboveComposerSlot}
+					{aboveComposerSlot && (
+						<div className="above-composer-dock" ref={dockElRef}>
+							{aboveComposerSlot}
+						</div>
+					)}
 
 					<div className="composer">
 						<div className={composerLayoutClass}>

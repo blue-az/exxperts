@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownRenderer } from "./Markdown";
 import { canFollowUp, canTransferConsult, consultHasDrift, type ConsultExchange, type ConsultState } from "../consult-stream";
 import { artifactBasename, artifactKindLabel, isSvgArtifact, taskArtifactUrl, thumbnailFor, type TaskArtifact, type TaskState } from "../task-stream";
@@ -19,7 +19,8 @@ import { artifactBasename, artifactKindLabel, isSvgArtifact, taskArtifactUrl, th
  */
 
 export interface DelegationCardProps {
-	/** Speaker chip content, e.g. "@euler" — the lila visitor accent, never the assistant's voice. */
+	/** Speaker element. Consult passes its lila @room chip (the visitor accent,
+	 * never the assistant's voice); tasks pass a plain grey label. */
 	speaker: ReactNode;
 	/** Status subline (e.g. "answering from euler's memory …"). */
 	subline?: ReactNode;
@@ -49,7 +50,7 @@ export function DelegationCard({ speaker, subline, headerTools, question, histor
 	return (
 		<div className="consult-card">
 			<div className="head-row">
-				<span className="consult-chip">{speaker}</span>
+				{speaker}
 				{subline && <span className="consult-sub">{subline}</span>}
 				{headerTools && <div className="head-tools">{headerTools}</div>}
 			</div>
@@ -370,7 +371,7 @@ export function ConsultDock({ state, onMinimize, onOpen, onStop, onDismiss, onTr
 	return (
 		<div className="consult-dock">
 			<DelegationCard
-				speaker={speaker}
+				speaker={<span className="consult-chip">{speaker}</span>}
 				subline={subline}
 				headerTools={headerTools}
 				historySlot={<ConsultHistory exchanges={state.exchanges} />}
@@ -428,25 +429,45 @@ function taskSpeaker(state: TaskState): string {
 	return `${state.templateLabel ?? "visual"} specialist`;
 }
 
+/** The trimmed non-empty lines of the delta-stream tail. */
+function tailLines(tail: string): string[] {
+	return tail.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+}
+
+/** The most recent status line of the tail (the strip / ticker text). */
+function latestTailLine(tail: string): string {
+	const lines = tailLines(tail);
+	return lines.length === 0 ? "starting…" : lines[lines.length - 1];
+}
+
 /**
  * The running status box (fills `statusStreamSlot`): the mono tail of the delta
  * stream, one line per newline, tool markers ("[artifact_write_html_deck]") in
- * the plan accent. The box clips to its tail (CSS justifies to the end), so it
- * always shows the most recent lines — the reducer already caps the buffer.
+ * the plan accent. The box scrolls and stays pinned to the newest line as the
+ * stream grows — the reducer already caps the buffer.
  */
-function TaskStatusStream({ tail }: { tail: string }) {
+function TaskStatusStream({ tail, plain, open }: { tail: string; plain?: boolean; open?: boolean }) {
 	// A liveness signal, not content: collapsed, only the latest line shows as
 	// a dim borderless ticker; clicking reveals the recent tail (the reducer's
 	// capped buffer). aria-live stays off in ticker mode so a per-line ticker
-	// does not spam screen readers.
-	const [expanded, setExpanded] = useState(false);
-	const lines = tail.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-	const latest = lines.length === 0 ? "starting…" : lines[lines.length - 1];
+	// does not spam screen readers. `open` starts expanded: the running card
+	// is reached by deliberately expanding the strip, so it shows the history
+	// at once instead of asking for a third click.
+	const [expanded, setExpanded] = useState(open ?? false);
+	const boxRef = useRef<HTMLDivElement>(null);
+	const lines = tailLines(tail);
+	const latest = latestTailLine(tail);
+	// Pin the scroll box to the newest line: the latest status is the reason
+	// to open the box, and new lines arrive while it is open.
+	useEffect(() => {
+		const box = boxRef.current;
+		if (box) box.scrollTop = box.scrollHeight;
+	}, [expanded, tail]);
 	if (!expanded) {
 		return (
 			<button
 				type="button"
-				className="task-status-ticker"
+				className={`task-status-ticker${plain ? " plain" : ""}`}
 				aria-label="task activity, click to expand"
 				title="Show recent activity"
 				onClick={() => setExpanded(true)}
@@ -456,7 +477,7 @@ function TaskStatusStream({ tail }: { tail: string }) {
 		);
 	}
 	return (
-		<div className="task-status-stream" aria-label="task activity" role="button" tabIndex={0} title="Collapse" onClick={() => setExpanded(false)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded(false); }}>
+		<div ref={boxRef} className="task-status-stream" aria-label="task activity" role="button" tabIndex={0} title="Collapse" onClick={() => setExpanded(false)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded(false); }}>
 			{lines.length === 0 ? (
 				<div className="task-line">starting…</div>
 			) : (
@@ -586,51 +607,80 @@ export function TaskDock({ state, onMinimize, onOpen, onStop, onDismiss, onTrans
 		setConfirmingClose(false);
 		setNotesOpen(false);
 	}, [state.taskId, state.phase]);
+	// The in-place "Close anyway?" reverts on its own if left alone.
+	useEffect(() => {
+		if (!confirmingClose) return;
+		const timer = setTimeout(() => setConfirmingClose(false), 5000);
+		return () => clearTimeout(timer);
+	}, [confirmingClose]);
 	if (state.phase === "none") return null;
 
 	const speaker = taskSpeaker(state);
 	const isHalted = state.phase === "error"; // terminal: stopped or failed
 	const isError = isHalted && !state.stopRequested; // red accent only for real failures
 
+	// Every FOLDED state is the same one-line strip, so the whole family sits
+	// full-width in the rail like the expanded cards (no right-hugging pill).
+	// Running: chip, latest status line, spinner, Stop. Done: chip, ready dot,
+	// Open. Stopped/error: chip, what happened, Open. Clicking the strip (not
+	// its side button) expands; the reducer's `minimized` flag carries the
+	// choice per task (a same-id refresh keeps it).
 	if (state.minimized) {
-		let pill: ReactNode;
-		if (state.phase === "running") {
-			pill = (
-				<>
-					<span className="spin" /> <span className="who">{speaker}</span> working… <span className="open-hint">Open</span>
-				</>
-			);
-		} else if (state.phase === "done") {
-			// The pulsing lila dot IS the ready signal (mockup state 5).
-			pill = (
-				<>
-					<span className="ready-dot" /> <span className="who">{speaker}</span> ready <span className="open-hint">Open</span>
-				</>
-			);
-		} else {
-			pill = (
-				<>
-					<span className="who">{speaker}</span> {state.stopRequested ? "stopped" : "error"} <span className="open-hint">Open</span>
-				</>
-			);
-		}
+		const running = state.phase === "running";
 		return (
-			<div className={`task-dock task-fold${isError ? " task-dock-error" : ""}`}>
-				<button className="task-pill" type="button" onClick={onOpen} title="Open the task">
-					{pill}
-				</button>
+			<div className={`task-dock task-strip-dock${isError ? " task-dock-error" : ""}`}>
+				<div className="task-strip">
+					<button className="task-strip-main" type="button" onClick={onOpen} title={running ? "Expand the task card. The task keeps running." : "Open the task"}>
+						<span className="task-who">{speaker}</span>
+						{running ? (
+							<>
+								<span className="task-strip-status">{latestTailLine(state.tail)}</span>
+								<span className="spin" aria-hidden="true" />
+							</>
+						) : state.phase === "done" ? (
+							<>
+								<span className="task-strip-status">ready</span>
+								<span className="ready-dot" aria-hidden="true" />
+							</>
+						) : (
+							<span className="task-strip-status">{state.stopRequested ? "stopped" : "error"}</span>
+						)}
+					</button>
+					{running ? (
+						<button className="btn task-run-stop" type="button" onClick={onStop}>
+							Stop
+						</button>
+					) : (
+						<button className="btn task-run-stop" type="button" onClick={onOpen}>
+							Open
+						</button>
+					)}
+				</div>
 			</div>
 		);
 	}
 
-	const headerTools = isHalted ? (
-		<button className="mini-btn" type="button" onClick={onDismiss} title="Dismiss" aria-label="Dismiss task">
-			✕
-		</button>
-	) : (
+	const minimizeButton = (
 		<button className="mini-btn" type="button" onClick={onMinimize} title="Minimize. The task keeps running." aria-label="Minimize task">
 			–
 		</button>
+	);
+	// While RUNNING the header row carries everything (compact card): the
+	// spinner and the small Stop join the minimize control, so no footer row.
+	let headerTools = isHalted ? (
+		<button className="mini-btn" type="button" onClick={onDismiss} title="Dismiss" aria-label="Dismiss task">
+			✕
+		</button>
+	) : state.phase === "running" ? (
+		<>
+			<span className="task-run-spin" aria-hidden="true" />
+			<button className="btn task-run-stop" type="button" onClick={onStop}>
+				Stop
+			</button>
+			{minimizeButton}
+		</>
+	) : (
+		minimizeButton
 	);
 
 	let subline: ReactNode;
@@ -643,18 +693,14 @@ export function TaskDock({ state, onMinimize, onOpen, onStop, onDismiss, onTrans
 	let footerActions: ReactNode;
 
 	if (state.phase === "running") {
-		subline = "working. You can keep chatting";
-		statusStreamSlot = <TaskStatusStream tail={state.tail} />;
-		footerMeta = (
-			<span className="task-status">
-				<span className="spin" /> running
-			</span>
-		);
-		footerActions = (
-			<button className="btn" type="button" onClick={onStop}>
-				Stop
-			</button>
-		);
+		// Expanded running card: the strip is "what's happening now", this card
+		// is "what has happened so far" — the recent status history, wrapped
+		// and shown immediately, no further clicks. One header row (chip, dim
+		// status, spinner, Stop, minimize), no footer, no divider. No title:
+		// the server-side title is the brief's first line capped at 80 chars,
+		// a truncated echo with no signal next to the live stream.
+		subline = "working in the background";
+		statusStreamSlot = <TaskStatusStream tail={state.tail} open />;
 	} else if (state.phase === "done") {
 		subline = "done";
 		artifactStripSlot = (
@@ -663,7 +709,7 @@ export function TaskDock({ state, onMinimize, onOpen, onStop, onDismiss, onTrans
 				{state.summary && (
 					<div className="task-notes">
 						<button type="button" className="task-notes-toggle" aria-expanded={notesOpen} onClick={() => setNotesOpen((open) => !open)}>
-							<span className="task-notes-tri">{notesOpen ? "▾" : "▸"}</span> Specialist notes
+							{notesOpen ? "Hide details" : "Details"}
 						</button>
 						{notesOpen && (
 							<div className="task-summary md">
@@ -684,24 +730,30 @@ export function TaskDock({ state, onMinimize, onOpen, onStop, onDismiss, onTrans
 		if (onIterateSubmit && state.artifacts.length > 0) {
 			followUpSlot = <TaskIterateFollowUp onIterateSubmit={onIterateSubmit} pending={iteratePending === true} />;
 		}
-		footerActions = confirmingClose ? (
+		// The actions live in the header row (like the running card's Stop), so
+		// the card ends at its content with no footer divider. The not-kept
+		// confirmation morphs the Close button in place: nothing moves, the
+		// same spot asks "Close anyway?" and reverts after a moment.
+		headerTools = (
 			<>
-				<span className="task-close-confirm">This result was not kept.</span>
-				<button className="btn task-close-danger" type="button" onClick={onDismiss}>
-					Close anyway
-				</button>
-				<button className="btn btn-primary" type="button" onClick={onTransfer}>
+				{confirmingClose ? (
+					<>
+						<span className="task-close-confirm">not kept</span>
+						{/* autoFocus keeps keyboard focus in place: arming unmounts the
+						    Close button the user just activated. */}
+						<button className="task-run-stop task-head-danger" type="button" autoFocus onClick={onDismiss}>
+							Close anyway?
+						</button>
+					</>
+				) : (
+					<button className="task-run-stop" type="button" onClick={() => setConfirmingClose(true)}>
+						Close
+					</button>
+				)}
+				<button className="task-run-stop task-head-primary" type="button" onClick={onTransfer}>
 					Add to conversation
 				</button>
-			</>
-		) : (
-			<>
-				<button className="btn" type="button" onClick={() => setConfirmingClose(true)}>
-					Close
-				</button>
-				<button className="btn btn-primary" type="button" onClick={onTransfer}>
-					Add to conversation
-				</button>
+				{minimizeButton}
 			</>
 		);
 	} else {
@@ -709,24 +761,21 @@ export function TaskDock({ state, onMinimize, onOpen, onStop, onDismiss, onTrans
 		subline = state.stopRequested ? "stopped" : "error";
 		body = <div className="task-error-msg">{state.errorMessage ?? (state.stopRequested ? "Stopped at your request." : "The task did not finish.")}</div>;
 		artifactStripSlot = <TaskArtifactStrip state={state} onOpenArtifact={onOpenArtifact} />;
+		// The header's dismiss control covers closing; a footer Dismiss would
+		// reintroduce the divider the header-actions rule removed.
 		footerMeta = state.artifacts.length > 0 ? <span className="task-meta">partial output remains available</span> : undefined;
-		footerActions = (
-			<button className="btn" type="button" onClick={onDismiss}>
-				Dismiss
-			</button>
-		);
 	}
 
 	return (
-		<div className={`task-dock${isError ? " task-dock-error" : ""}`}>
+		<div className={`task-dock${isError ? " task-dock-error" : ""}${state.phase === "running" ? " task-run-compact" : ""}`}>
 			<DelegationCard
-				speaker={speaker}
+				speaker={<span className="task-who">{speaker}</span>}
 				subline={subline}
 				headerTools={headerTools}
-				// While running, the user just approved this task seconds ago — the
-				// title line is noise next to the live stream. It returns on the
-				// done/halted card, where it identifies what finished.
-				question={state.phase !== "running" && state.title ? { text: state.title } : undefined}
+				// No title on any dock card: it is the brief's first line capped
+				// server-side at 80 chars, so it always reads as a cut-off echo.
+				// The speaker label plus the artifact tiles identify the task.
+				question={undefined}
 				statusStreamSlot={statusStreamSlot}
 				body={body}
 				artifactStripSlot={artifactStripSlot}

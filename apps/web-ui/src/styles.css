@@ -586,7 +586,7 @@ strong, b { font-weight: 700; }
 }
 .workbench.with-preview,
 .workbench.with-right-pane {
-	grid-template-columns: minmax(0, 1fr) 8px minmax(360px, 420px);
+	grid-template-columns: minmax(0, 1fr) 8px minmax(360px, var(--right-pane-width, 420px));
 }
 /* V5: artifact viewer maximize — collapse the chat column + resizer and give the
    pane the whole workbench. workbenchStyle is set to undefined in this state
@@ -605,6 +605,11 @@ strong, b { font-weight: 700; }
 	border-right: 1px solid var(--border);
 }
 .pane-resizer:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+/* While the divider is being dragged: keep the col-resize cursor everywhere
+   (instead of flickering per-element), suppress text selection, and shield
+   pane iframes so they cannot swallow the drag's mouse events. */
+.workbench.pane-resizing { cursor: col-resize; user-select: none; }
+.workbench.pane-resizing iframe { pointer-events: none; }
 .main {
 	display: flex;
 	flex-direction: column;
@@ -716,6 +721,24 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	align-items: center;
 	gap: 18px;
+}
+/* The consult/task dock column above the composer. The wrapper is observed
+   (ResizeObserver in InRoomChatShellView) so the messages re-pin to the bottom
+   when a dock appears or grows; the fade below marks the scroll boundary as
+   deliberate instead of a hard cut. */
+.above-composer-dock {
+	display: flex;
+	flex-direction: column;
+}
+.messages-frame.with-dock::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 26px;
+	pointer-events: none;
+	background: linear-gradient(to bottom, transparent, var(--bg));
 }
 .jump-to-latest {
 	position: absolute;
@@ -5859,10 +5882,26 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	gap: 10px;
 }
-.approval-card.resolved {
-	border-style: dashed;
-	border-color: var(--dim);
-	opacity: 0.7;
+/* Resolved approvals fold to one quiet line (dock redesign 2026-07): mark,
+   verdict, title. No card chrome; the decision is chat history. */
+.approval-resolved-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	max-width: 760px;
+	min-width: 0;
+	padding: 2px 0;
+	font-size: 12.5px;
+	color: var(--muted);
+}
+.approval-resolved-mark { flex: 0 0 auto; }
+.approval-resolved-verdict { flex: 0 0 auto; }
+.approval-resolved-line .approval-resolved-title {
+	color: var(--fg-soft);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .approval-head { display: flex; align-items: baseline; gap: 12px; }
 .approval-tag {
@@ -5894,7 +5933,6 @@ strong, b { font-weight: 700; }
 	display: block;
 	margin: 2px 0 0;
 }
-.approval-delegate-sub { color: var(--muted); font-size: 11.5px; }
 
 /* Delegate approvals: the guidance facts shown behind Details. */
 .approval-delegate { display: flex; flex-direction: column; gap: 10px; }
@@ -5912,7 +5950,6 @@ strong, b { font-weight: 700; }
 	align-self: center;
 }
 .approval-details-toggle:hover { color: var(--fg-soft); }
-.task-notes-tri { color: var(--exx-plan); }
 .task-notes { margin-top: 10px; }
 .task-notes-toggle {
 	background: none;
@@ -5926,7 +5963,6 @@ strong, b { font-weight: 700; }
 .task-notes-toggle:hover { color: var(--fg-soft); }
 .task-notes .task-summary { margin-top: 8px; }
 .task-close-confirm { font-size: 11.5px; color: var(--exx-text-muted); align-self: center; }
-.task-close-danger { border-color: color-mix(in srgb, var(--exx-danger) 55%, transparent); color: var(--exx-danger); }
 /* Done-card thumbnails are the card's hero: larger, with a hover lift. */
 .task-dock .task-thumb { width: 240px; transition: transform 120ms ease, box-shadow 120ms ease; }
 .task-dock .task-thumb:hover { transform: translateY(-1px); box-shadow: var(--exx-shadow-popover); }
@@ -6002,7 +6038,6 @@ strong, b { font-weight: 700; }
 	letter-spacing: 0.06em;
 }
 .btn-neutral:hover { border-color: var(--fg); }
-.approval-resolved { color: var(--muted); font-size: 12px; font-style: italic; }
 
 :root[data-theme="light"] .assistant-markdown :not(pre) > code {
 	background: color-mix(in srgb, var(--bg-2) 88%, var(--fg) 4%);
@@ -6050,9 +6085,6 @@ strong, b { font-weight: 700; }
 :root[data-theme="light"] .approval-card {
 	background: color-mix(in srgb, var(--panel) 88%, var(--bg) 12%);
 	border-color: var(--border);
-}
-:root[data-theme="light"] .approval-card.resolved {
-	border-color: var(--border-soft);
 }
 
 /* Approval preview pane ---------------------------------------- */
@@ -8623,32 +8655,57 @@ strong, b { font-weight: 700; }
 	align-self: center;
 	width: calc(100% - 52px);
 }
-.task-dock.task-fold {
-	/* Folded, the pill aligns to the composer's right edge, like the consult pill. */
-	margin: 0 18px 10px;
-	width: calc(100% - 36px);
-	max-width: min(calc(var(--chat-rail-width) + 48px), 100%);
-	display: flex;
-	justify-content: flex-end;
+/* Every folded state is the full-width strip; the ready dot pulses inside it. */
+.task-strip .ready-dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 999px;
+	background: var(--exx-plan);
+	animation: task-pulse 1.6s ease-in-out infinite;
+	flex: 0 0 auto;
 }
-.task-pill {
-	display: inline-flex;
+/* -- running strip (dock redesign 2026-07) ----------------------------------
+   While a task runs, the folded dock is a one-line strip: family chip, the
+   latest status line ellipsized, a spinner, and Stop. Clicking the strip
+   expands to the running card. */
+.task-strip {
+	display: flex;
 	align-items: center;
 	gap: 10px;
 	border: 1px solid var(--exx-border-soft);
 	border-left: 3px solid var(--exx-plan);
 	background: var(--exx-surface);
-	border-radius: 999px;
-	padding: 6px 8px 6px 14px;
+	border-radius: 12px;
+	padding: 6px 10px 6px 12px;
 	box-shadow: var(--exx-shadow-popover);
+}
+.task-strip-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: none;
+	border: none;
+	padding: 2px 0;
 	font: inherit;
-	font-size: 12.5px;
 	color: var(--exx-text-soft);
 	cursor: pointer;
+	text-align: left;
 }
-.task-pill:hover { background: var(--exx-surface-hover); }
-.task-pill .who { color: var(--exx-plan); font-weight: 700; }
-.task-pill .spin {
+.task-strip-main .task-who { flex: 0 0 auto; }
+.task-strip-status {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--exx-font-mono);
+	font-size: 11px;
+	color: var(--exx-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.task-strip-main:hover .task-strip-status { color: var(--exx-text-soft); }
+.task-strip-main .spin {
 	width: 10px;
 	height: 10px;
 	border-radius: 999px;
@@ -8657,34 +8714,64 @@ strong, b { font-weight: 700; }
 	animation: task-spin 1s linear infinite;
 	flex: 0 0 auto;
 }
-.task-pill .ready-dot {
-	width: 9px;
-	height: 9px;
-	border-radius: 999px;
-	background: var(--exx-plan);
-	animation: task-pulse 1.6s ease-in-out infinite;
+/* The small Stop that lives outside a footer (strip + running-card header). */
+.task-run-stop {
+	font: inherit;
+	font-size: 12px;
+	border-radius: 8px;
+	padding: 3px 12px;
+	cursor: pointer;
+	border: 1px solid var(--exx-border-soft);
+	background: transparent;
+	color: var(--exx-text-soft);
 	flex: 0 0 auto;
 }
-.task-pill .open-hint {
-	font-size: 12px;
+.task-run-stop:hover { background: var(--exx-surface-hover); }
+.task-run-stop:focus-visible { outline: 2px solid var(--exx-plan); outline-offset: 1px; }
+/* Header-row primary action on the done card (Add to conversation). */
+.task-run-stop.task-head-primary {
+	background: var(--fg);
+	color: var(--bg);
+	border-color: var(--fg);
 	font-weight: 700;
-	color: var(--exx-text);
-	border: 1px solid var(--exx-border-soft);
+}
+.task-run-stop.task-head-primary:hover { background: var(--fg); opacity: 0.88; }
+/* In-place Close confirmation on the done card. */
+.task-run-stop.task-head-danger {
+	border-color: color-mix(in srgb, var(--exx-danger) 55%, transparent);
+	color: var(--exx-danger);
+}
+
+/* -- compact running card (dock redesign 2026-07) ----------------------------
+   Expanded while running, the card is one header row (chip, dim status,
+   spinner, Stop, minimize) with the latest status line below in the normal
+   text face; no footer, no divider. */
+.task-dock.task-run-compact .consult-card { padding: 10px 14px; }
+.task-dock.task-run-compact .head-tools { align-items: center; }
+.task-run-spin {
+	width: 10px;
+	height: 10px;
 	border-radius: 999px;
-	padding: 2px 12px;
-	background: var(--exx-surface-raised);
+	border: 2px solid var(--exx-plan);
+	border-top-color: transparent;
+	animation: task-spin 1s linear infinite;
+	align-self: center;
+	flex: 0 0 auto;
+	margin-right: 4px;
 }
-/* Error accent: the fresh delegation card / pill switches its left edge (and,
-   on the card, the speaker chip) to the warning tone — targeting the base
-   `.consult-*` chrome from the task dock wrapper, so the base needs no change. */
+.task-status-ticker.plain {
+	font-family: inherit;
+	font-size: 12.5px;
+	color: var(--exx-text-soft);
+	margin-top: 6px;
+}
+
+/* Error accent: the card / folded strip switches its left edge and the speaker
+   label to the warning tone — targeting the base chrome from the task dock
+   wrapper, so the base needs no change. */
 .task-dock-error .consult-card { border-left-color: var(--warning); }
-.task-dock-error .consult-chip {
-	color: var(--warning);
-	border-color: color-mix(in srgb, var(--warning) 45%, transparent);
-	background: color-mix(in srgb, var(--warning) 9%, transparent);
-}
-.task-dock-error .task-pill { border-left-color: var(--warning); }
-.task-dock-error .task-pill .who { color: var(--warning); }
+.task-dock-error .task-strip { border-left-color: var(--warning); }
+.task-dock-error .task-who { color: var(--warning); }
 
 /* -- running status stream (the statusStreamSlot occupant) ------------------- */
 .task-status-ticker {
@@ -8708,6 +8795,8 @@ strong, b { font-weight: 700; }
 .task-status-stream { cursor: pointer; }
 .task-status-stream {
 	margin-top: 10px;
+	max-height: 150px;
+	overflow-y: auto;
 	border: 1px solid var(--exx-border-soft);
 	border-radius: 8px;
 	background: color-mix(in srgb, var(--exx-border-soft) 25%, transparent);
@@ -8715,17 +8804,16 @@ strong, b { font-weight: 700; }
 	font-family: var(--exx-font-mono);
 	font-size: 11.5px;
 	color: var(--exx-text-muted);
-	max-height: 72px;
-	overflow: hidden;
 	display: flex;
 	flex-direction: column;
-	justify-content: flex-end;
 }
 .task-status-stream .task-line {
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
+/* Short tails hug the bottom edge like a terminal; margin (not justify-content:
+   flex-end) so the start of a long tail stays reachable by scroll. */
+.task-status-stream .task-line:first-child { margin-top: auto; }
 .task-status-stream .task-line.is-tool { color: var(--exx-plan); }
 
 /* -- footer status / meta (running spinner + done/error hint) ---------------- */
@@ -8827,9 +8915,10 @@ strong, b { font-weight: 700; }
 @keyframes task-spin { to { transform: rotate(360deg); } }
 @keyframes task-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {
-	.task-pill .spin,
+	.task-strip-main .spin,
+	.task-run-spin,
 	.task-status .spin { animation: none; opacity: .6; }
-	.task-pill .ready-dot { animation: none; }
+	.task-strip .ready-dot { animation: none; }
 }
 
 /* Artifact viewer -----------------------------------------------------------
@@ -9023,27 +9112,10 @@ strong, b { font-weight: 700; }
 }
 .task-item > * { max-width: 780px; }
 .task-item .head-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.task-item-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	font-size: 12px;
-	font-weight: 700;
-	color: var(--exx-plan);
-	border: 1px solid color-mix(in srgb, var(--exx-plan) 45%, transparent);
-	border-radius: 999px;
-	padding: 1px 10px;
-	background: color-mix(in srgb, var(--exx-plan) 9%, transparent);
-}
+/* Plain grey speaker label for the task family (the lila chip stays consult-only,
+   where it marks another room's voice). */
+.task-who { font-weight: 700; color: var(--exx-text-soft); font-size: 12.5px; }
 .task-item-sub { font-size: 12px; color: var(--exx-text-muted); }
-.task-item-title { font-size: 13.5px; color: var(--exx-text-soft); margin: 8px 0 2px; }
-.task-item-title .q-label {
-	color: var(--exx-text-muted);
-	font-size: 11px;
-	text-transform: uppercase;
-	letter-spacing: .07em;
-	margin-right: 8px;
-}
 .task-item-foot { margin-top: 8px; }
 .task-item-foot .meta { font-size: 11.5px; color: var(--exx-text-muted); font-family: var(--exx-font-mono); }
 
@@ -9786,8 +9858,8 @@ strong, b { font-weight: 700; }
 }
 
 /* Round 2: overflow + growth guards on the delegation surfaces. */
-.task-file-chip .task-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.consult-q, .task-item-title, .approval-title { overflow-wrap: anywhere; }
+.task-file-chip .task-file-name { overflow-wrap: anywhere; }
+.consult-q, .approval-title { overflow-wrap: anywhere; }
 .approval-message { overflow-wrap: anywhere; }
 .task-notes .task-summary { max-height: 300px; overflow: auto; }
 .consult-answer { max-height: 340px; overflow: auto; }

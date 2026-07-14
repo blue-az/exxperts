@@ -64,6 +64,44 @@ EOF
 	fi
 }
 
+# Fail early, with a plain-language message, when the network cannot reach the
+# repo host at all (offline, DNS broken, firewall). curl honors the same
+# HTTPS_PROXY environment as git, so a working proxy setup passes this probe.
+check_network() {
+	local host
+	host="$(printf '%s' "$REPO_URL" | sed -E 's#^[a-z+]+://##; s#^[^/@]*@##; s#[:/].*$##')"
+	[ -n "$host" ] || return 0
+	if ! curl -sSI -o /dev/null --max-time 20 "https://$host" 2>/dev/null; then
+		local proxy_state="no proxy variables are set"
+		[ -n "${HTTPS_PROXY:-}${https_proxy:-}" ] && proxy_state="HTTPS_PROXY is set to '${HTTPS_PROXY:-$https_proxy}'"
+		fail "cannot reach https://$host, so the install cannot download anything.
+[exxperts] Check your internet connection. If this network needs a proxy, set it first
+[exxperts] (currently $proxy_state), e.g.:
+[exxperts]   export HTTPS_PROXY=http://proxy.your-company.com:8080
+[exxperts] then re-run this command."
+	fi
+}
+
+# A fresh install writes roughly 3 GB: the clone with node_modules, the npm
+# cache, and a second copy under the global npm prefix. Say so up front
+# instead of letting npm die minutes in with a confusing ENOSPC.
+check_disk_space() {
+	local target="$1" probe avail_kb
+	probe="$target"
+	[ -e "$probe" ] || probe="$(dirname "$probe")"
+	[ -e "$probe" ] || probe="$HOME"
+	avail_kb="$(df -Pk "$probe" 2>/dev/null | awk 'NR==2 {print $4}')"
+	case "$avail_kb" in ''|*[!0-9]*) return 0;; esac
+	if [ "$avail_kb" -lt 1048576 ]; then
+		fail "not enough free disk space: $((avail_kb / 1024)) MB available where $target lives,
+[exxperts] but a fresh install needs about 3 GB (clone, build, npm cache, installed copy).
+[exxperts] Free up some space, then re-run this command."
+	fi
+	if [ "$avail_kb" -lt 4194304 ]; then
+		say "heads up: only $((avail_kb / 1048576)) GB free where $target lives; a fresh install uses about 3 GB."
+	fi
+}
+
 # Bring an existing clone up to date. Skips quietly when the clone has no
 # upstream branch to pull from (e.g. a CI checkout on a detached commit).
 update_clone() {
@@ -97,6 +135,9 @@ main() {
 
 	local dir
 	dir="$(resolve_install_dir)"
+
+	check_network
+	check_disk_space "$dir"
 
 	if is_exxperts_clone "$dir"; then
 		update_clone "$dir"

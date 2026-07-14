@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { Memory } from "./components/Memory";
@@ -302,22 +302,43 @@ function hasUserInput(items: ChatItem[]): boolean {
 function hasUserVisibleTurn(items: ChatItem[]): boolean {
 	return items.some((item) => (item.kind === "user" || item.kind === "assistant") && item.text.trim().length > 0);
 }
-const KNOWLEDGE_PANE_WIDTH_STORAGE_KEY = "exxperts.knowledgePane.width";
+// A stored width means the user dragged the divider. The old key also captured
+// auto-persisted defaults, which would mask the equal-split open size forever,
+// so the key is bumped once instead of migrating those values.
+const KNOWLEDGE_PANE_WIDTH_STORAGE_KEY = "exxperts.rightPane.width";
 const RIGHT_PANE_MIN_WIDTH = 360;
+// Keep at least this much of the workbench for the chat column when the pane
+// grows; without it a wide pane can squeeze the chat (a 1fr track) to zero.
+const RIGHT_PANE_MIN_CHAT_WIDTH = 360;
+const RIGHT_PANE_RESIZER_WIDTH = 8;
 
-function getRightPaneMaxWidth() {
+function getRightPaneMaxWidth(hostWidth?: number) {
+	// Clamp against the workbench (chat + divider + pane) when we can measure
+	// it; the window is only a bootstrap fallback (initial state, no ref yet).
+	if (typeof hostWidth === "number" && hostWidth > 0) {
+		return Math.floor(hostWidth - RIGHT_PANE_RESIZER_WIDTH - RIGHT_PANE_MIN_CHAT_WIDTH);
+	}
 	if (typeof window === "undefined") return 820;
 	return Math.floor(window.innerWidth * 0.7);
 }
 
-function clampRightPaneWidth(width: number) {
-	const max = Math.max(RIGHT_PANE_MIN_WIDTH, getRightPaneMaxWidth());
+function clampRightPaneWidth(width: number, hostWidth?: number) {
+	const max = Math.max(RIGHT_PANE_MIN_WIDTH, getRightPaneMaxWidth(hostWidth));
 	return Math.max(RIGHT_PANE_MIN_WIDTH, Math.min(max, Math.round(width)));
 }
 
 function getDefaultKnowledgePaneWidth() {
 	if (typeof window === "undefined") return 520;
 	return clampRightPaneWidth(window.innerWidth * 0.5);
+}
+
+function equalSplitPaneWidth(hostWidth?: number) {
+	// The pane opens sharing the workbench with the chat half and half; the
+	// sidebar sits outside the workbench, so this splits what they share.
+	if (typeof hostWidth === "number" && hostWidth > 0) {
+		return clampRightPaneWidth(Math.floor((hostWidth - RIGHT_PANE_RESIZER_WIDTH) / 2), hostWidth);
+	}
+	return getDefaultKnowledgePaneWidth();
 }
 
 function fmtTok(n: number): string {
@@ -2288,6 +2309,13 @@ export function App() {
 		return getDefaultKnowledgePaneWidth();
 	});
 	const [resizingRightPane, setResizingRightPane] = useState(false);
+	// Only a real divider drag makes the width a preference worth keeping;
+	// defaults and window-resize clamps are not the user speaking.
+	const rightPaneUserSizedRef = useRef(false);
+	// Drag anchor: pointer x and the pane's RENDERED width at mousedown, so the
+	// divider tracks the grab point instead of jumping to the pointer, and so a
+	// grid-clamped pane (rendered narrower than state) resizes from where it is.
+	const rightPaneDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 	const persistTimerRef = useRef<number | null>(null);
 
 	const wsRef = useRef<WebSocket | null>(null);
@@ -2625,10 +2653,10 @@ export function App() {
 	useEffect(() => {
 		if (!resizingRightPane) return;
 		const onMove = (e: MouseEvent) => {
-			const host = workbenchRef.current;
-			if (!host) return;
-			const rect = host.getBoundingClientRect();
-			const next = clampRightPaneWidth(rect.right - e.clientX);
+			const drag = rightPaneDragRef.current;
+			if (!drag) return;
+			const next = clampRightPaneWidth(drag.startWidth + drag.startX - e.clientX, workbenchRef.current?.clientWidth);
+			rightPaneUserSizedRef.current = true;
 			setRightPaneWidth(next);
 		};
 		const onUp = () => setResizingRightPane(false);
@@ -2641,14 +2669,25 @@ export function App() {
 	}, [resizingRightPane]);
 
 	useEffect(() => {
-		const onResize = () => setRightPaneWidth((current) => clampRightPaneWidth(current));
+		const onResize = () => setRightPaneWidth((current) => clampRightPaneWidth(current, workbenchRef.current?.clientWidth));
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	}, []);
 
 	useEffect(() => {
+		if (!rightPaneUserSizedRef.current) return;
 		try { localStorage.setItem(KNOWLEDGE_PANE_WIDTH_STORAGE_KEY, String(clampRightPaneWidth(rightPaneWidth))); } catch {}
 	}, [rightPaneWidth]);
+
+	// Default open size: split the workbench evenly with the chat. Runs on each
+	// open until the user drags the divider (then their width wins, above).
+	useEffect(() => {
+		if (!rightPane || rightPaneUserSizedRef.current) return;
+		let stored: string | null = null;
+		try { stored = localStorage.getItem(KNOWLEDGE_PANE_WIDTH_STORAGE_KEY); } catch {}
+		if (stored) return;
+		setRightPaneWidth(equalSplitPaneWidth(workbenchRef.current?.clientWidth));
+	}, [rightPane]);
 
 	// ------------------------------------------------------------------
 	// Assistant stream host: dispatches actions into the pure reducer in
@@ -4728,14 +4767,34 @@ export function App() {
 	const rightPaneVisible = Boolean(rightPane);
 	const artifactPaneMaximized = artifactMaximized && rightPane?.kind === "artifactViewer";
 	// Maximized: no inline style — the .artifact-pane-maximized class drives a
-	// single-track grid (an inline 3-track style would override it).
+	// single-track grid. The width travels as a custom property (consumed by the
+	// .with-right-pane grid rule) rather than an inline grid-template-columns,
+	// so the <=900px stacked layout keeps winning while the pane is open.
 	const workbenchStyle = rightPaneVisible && !artifactPaneMaximized
-		? { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(${RIGHT_PANE_MIN_WIDTH}px, ${rightPaneWidth}px)` }
+		? ({ "--right-pane-width": `${rightPaneWidth}px` } as CSSProperties)
 		: undefined;
 
 	const rightPaneSlot = (
 		<>
-			{rightPaneVisible && !artifactPaneMaximized && <div className="pane-resizer" role="separator" aria-orientation="vertical" onMouseDown={() => setResizingRightPane(true)} />}
+			{rightPaneVisible && !artifactPaneMaximized && (
+				<div
+					className="pane-resizer"
+					role="separator"
+					aria-orientation="vertical"
+					onMouseDown={(e) => {
+						const host = workbenchRef.current;
+						if (!host) return;
+						// preventDefault: a mousedown default-starts a text selection, which
+						// would paint the transcript blue for the whole drag.
+						e.preventDefault();
+						rightPaneDragRef.current = {
+							startX: e.clientX,
+							startWidth: host.getBoundingClientRect().right - e.currentTarget.getBoundingClientRect().right,
+						};
+						setResizingRightPane(true);
+					}}
+				/>
+			)}
 			{preview && <Preview content={preview.content} title={preview.title} type={preview.type} onClose={() => setPreview(null)} />}
 			{rightPane?.kind === "artifactViewer" && (
 				<ArtifactViewer
@@ -4764,7 +4823,7 @@ export function App() {
 			}
 			withPreview={false}
 			workbenchRef={workbenchRef}
-			workbenchClassName={rightPaneVisible ? (artifactPaneMaximized ? "with-right-pane artifact-pane-maximized" : "with-right-pane") : ""}
+			workbenchClassName={`${rightPaneVisible ? (artifactPaneMaximized ? "with-right-pane artifact-pane-maximized" : "with-right-pane") : ""}${resizingRightPane ? " pane-resizing" : ""}`}
 			workbenchStyle={workbenchStyle}
 			activeDisplay={activeDisplay || ""}
 			ownerSecondary=""
