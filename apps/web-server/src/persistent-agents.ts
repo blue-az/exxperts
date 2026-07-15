@@ -2867,7 +2867,16 @@ function validateApprovedRecentContextDraft(markdown: string): string[] {
 	if (!trimmed) throw new Error("approvedRecentContext is required");
 	if (trimmed.length > 8000) throw new Error("approvedRecentContext is too large");
 	if (/^##\s+/m.test(trimmed)) throw new Error("approvedRecentContext must not contain top-level L1b sections such as Chronos, Deep Memory, Active Items, or Recent Context");
-	if (!/^###\s+RC-(?:DRAFT|[A-Za-z0-9_-]+)/m.test(trimmed)) throw new Error("approvedRecentContext must start with a Recent Context entry heading");
+	if (!/^###\s+RC-(?:DRAFT|[A-Za-z0-9_-]+)/.test(trimmed)) throw new Error("approvedRecentContext must start with a Recent Context entry heading");
+	// One entry per approval. A second "### " heading in the body would split
+	// into a separate Recent Context entry after the write — a smuggled entry
+	// the reviewer never approved as its own memory.
+	if ((trimmed.match(/^###\s+/gm) ?? []).length > 1) throw new Error("approvedRecentContext must contain exactly one Recent Context entry heading");
+	// Provenance metadata is written by the gate, never accepted from the
+	// draft: an embedded rc_metadata comment carrying a real checkpoint id
+	// would earn a forged receipt, and HTML comments are invisible in the
+	// rendered approval view, so nothing hidden gets into approved memory.
+	if (/<!--/.test(trimmed)) throw new Error("approvedRecentContext must not contain HTML comments; the checkpoint gate writes the rc_metadata provenance line itself");
 	if (!extractApprovedRecentContextField(trimmed, "Session arc", ["Body", "Parked"])) throw new Error("approvedRecentContext must include a non-empty Session arc field");
 	if (!extractApprovedRecentContextField(trimmed, "Body", ["Parked"])) throw new Error("approvedRecentContext must include a non-empty Body field");
 	if (!extractApprovedRecentContextField(trimmed, "Parked", [])) throw new Error("approvedRecentContext must include a non-empty Parked field");

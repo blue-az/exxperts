@@ -100,6 +100,44 @@ async function main(): Promise<void> {
 	const linuxTimedOut = await chooseLocalFolder({ platform: "linux", runner: linuxTimeoutRunner });
 	assert(!linuxTimedOut.ok && linuxTimedOut.supported === true && linuxTimedOut.code === "folder_chooser_timeout", `linux timeout should be normalized: ${JSON.stringify(linuxTimedOut)}`);
 
+	// Windows: the script must travel as -EncodedCommand with no double quotes anywhere.
+	// An inline -Command argument with embedded double quotes gets \"-escaped by Node's
+	// Windows arg quoting and powershell.exe mis-parses it; this pins the fix.
+	let windowsCommand = "";
+	let windowsArgs: string[] = [];
+	const windowsSelectedRunner: LocalFolderPickerRunner = async (command, args) => {
+		windowsCommand = command;
+		windowsArgs = args;
+		return { stdout: "OK:C:\\Users\\example\\Workspace Folder\r\n", stderr: "" };
+	};
+	const windowsSelected = await chooseLocalFolder({ platform: "win32", runner: windowsSelectedRunner, powershellPath: "powershell.exe" });
+	assert(windowsSelected.ok && !windowsSelected.cancelled, `windows selected folder should succeed: ${JSON.stringify(windowsSelected)}`);
+	assert(windowsSelected.path === "C:\\Users\\example\\Workspace Folder", `windows selected path should strip the OK: sentinel, got ${windowsSelected.path}`);
+	assert(windowsCommand === "powershell.exe", `runner should receive powershell path, got ${windowsCommand}`);
+	const encodedIndex = windowsArgs.indexOf("-EncodedCommand");
+	assert(encodedIndex >= 0 && typeof windowsArgs[encodedIndex + 1] === "string", `powershell should receive -EncodedCommand, got ${windowsArgs.join(" ")}`);
+	assert(!windowsArgs.includes("-Command"), `powershell must not receive an inline -Command, got ${windowsArgs.join(" ")}`);
+	const decodedScript = Buffer.from(windowsArgs[encodedIndex + 1], "base64").toString("utf16le");
+	assert(decodedScript.includes("FolderBrowserDialog"), "decoded script should open the folder browser dialog");
+	assert(decodedScript.includes("'OK:'") && decodedScript.includes("'CANCEL'"), "decoded script should print the OK:/CANCEL sentinels");
+	assert(!decodedScript.includes('"'), `decoded script must not contain double quotes (the quoting surface that broke the picker): ${decodedScript}`);
+
+	const windowsCancelledRunner: LocalFolderPickerRunner = async () => ({ stdout: "CANCEL\r\n", stderr: "" });
+	const windowsCancelled = await chooseLocalFolder({ platform: "win32", runner: windowsCancelledRunner });
+	assert(windowsCancelled.ok && windowsCancelled.cancelled === true && windowsCancelled.path === null, `windows CANCEL output should be a clean cancellation: ${JSON.stringify(windowsCancelled)}`);
+
+	const windowsMissingRunner: LocalFolderPickerRunner = async () => {
+		const error = new Error("spawn powershell.exe ENOENT") as NodeJS.ErrnoException;
+		error.code = "ENOENT";
+		throw error;
+	};
+	const windowsMissing = await chooseLocalFolder({ platform: "win32", runner: windowsMissingRunner });
+	assert(!windowsMissing.ok && windowsMissing.supported === false && windowsMissing.code === "folder_chooser_unavailable", `missing powershell should be unavailable: ${JSON.stringify(windowsMissing)}`);
+
+	const windowsGarbledRunner: LocalFolderPickerRunner = async () => ({ stdout: "At line:1 char:3 parse error\r\n", stderr: "" });
+	const windowsGarbled = await chooseLocalFolder({ platform: "win32", runner: windowsGarbledRunner });
+	assert(!windowsGarbled.ok && windowsGarbled.supported === true && windowsGarbled.code === "choose_folder_failed", `garbled windows output should fail safely: ${JSON.stringify(windowsGarbled)}`);
+
 	console.log("system choose-folder smoke passed");
 }
 

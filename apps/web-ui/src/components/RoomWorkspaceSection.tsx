@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { PersistentAgentStatus, PersistentRoomCapabilityPolicyView, PersistentRoomWorkspaceAccessMode } from "../types";
 import { chooseSystemFolder, clearPersistentRoomWorkspaceDefault, fetchPersistentRoomWorkspaceDefault, savePersistentRoomWorkspaceDefault } from "../persistent-room-workspace-api";
+import { RsInfo } from "./rs-info";
 
 const BOUNDED_WORKSPACE_TOOL_OPTIONS = [
 	{ name: "ls", label: "List" },
@@ -88,7 +89,7 @@ function WorkspaceDefaultPolicySummary({ policy, warnings }: { policy: Persisten
 				<div className="workspace-summary-folder">
 					<svg className="workspace-folder-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M1.5 2.5A1.5 1.5 0 0 1 3 1h3.2c.4 0 .78.16 1.06.44L8.6 2.78c.1.1.22.15.35.15H13a1.5 1.5 0 0 1 1.5 1.5v8.07A1.5 1.5 0 0 1 13 14H3a1.5 1.5 0 0 1-1.5-1.5v-10Z" /></svg>
 					<strong>{savedLabel}</strong>
-					<span className="workspace-summary-mode">{accessModeLabel(policy.workspaceAccessMode)}</span>
+					<span className="workspace-summary-mode" title={accessModeHint(policy.workspaceAccessMode)}>{accessModeLabel(policy.workspaceAccessMode)}</span>
 				</div>
 				<dl className="workspace-summary-facts">
 					<div>
@@ -103,7 +104,8 @@ function WorkspaceDefaultPolicySummary({ policy, warnings }: { policy: Persisten
 					)}
 				</dl>
 				<p className="workspace-summary-note">
-					The full local path is stored on this machine and not shown here.{showFolderClue ? ` Folder: ${folderName}.` : ""} Existing thread workspaces remain unchanged.
+					The full local path stays on this machine and is not shown here.{showFolderClue ? ` Folder: ${folderName}.` : ""}
+					<RsInfo text="Changing the workspace applies to new conversations. Existing thread workspaces remain unchanged." />
 				</p>
 			</div>
 			{warnings.length > 0 && (
@@ -295,12 +297,16 @@ export function RoomWorkspaceSection({ status, onDirtyChange }: { status: Persis
 
 	return (
 		<div className="room-workspace-section">
-			{!editing && (
-				<div className="workspaces-row-actions">
-					<button className="inline-action" disabled={!canManageWorkspace || loading || saving} onClick={startOrCancelEditing}>{policy ? "Edit workspace" : "Set workspace"}</button>
-					<button className="inline-action" disabled={!canManageWorkspace || loading || saving || !policy} onClick={() => void clearWorkspaceDefault()}>{saving ? "Updating…" : "Clear"}</button>
-				</div>
-			)}
+			<header className="rs-pane-head">
+				<h3>Workspace</h3>
+				{!editing && (
+					<div className="rs-pane-actions">
+						{policy && <button className="rs-quiet" disabled={!canManageWorkspace || loading || saving} onClick={() => void clearWorkspaceDefault()}>{saving ? "Updating…" : "Clear"}</button>}
+						<button className="rs-btn" disabled={!canManageWorkspace || loading || saving} onClick={startOrCancelEditing}>{policy ? "Edit workspace" : "Set workspace"}</button>
+					</div>
+				)}
+			</header>
+			<p className="rs-pane-sub">The folder this room works in, and what it may do there.</p>
 			<div className="workspaces-room-body">
 				{loading ? <p className="workspaces-empty-state">Loading workspace default…</p> : !editing && <WorkspaceDefaultPolicySummary policy={policy} warnings={warnings} />}
 				{editing && (
@@ -322,7 +328,7 @@ export function RoomWorkspaceSection({ status, onDirtyChange }: { status: Persis
 									onChange={(event) => { setDraftRoot(event.target.value); setError(null); setMessage(null); }}
 								/>
 								{trimmedDraftRoot.length > 0 && policy && (
-									<button className="inline-action" type="button" disabled={saving} onClick={() => { setDraftRoot(""); setError(null); setMessage(null); }}>Keep saved folder</button>
+									<button className="rs-quiet" type="button" disabled={saving} onClick={() => { setDraftRoot(""); setError(null); setMessage(null); }}>Keep saved folder</button>
 								)}
 							</div>
 						</div>
@@ -366,8 +372,8 @@ export function RoomWorkspaceSection({ status, onDirtyChange }: { status: Persis
 						)}
 						<div className="workspace-form-actions">
 							{dirty && <span className="workspace-unsaved-hint">Unsaved changes</span>}
-							<button className="landing-action" disabled={saving}>{saving ? "Saving…" : policy ? "Save change" : "Save workspace"}</button>
-							<button className="inline-action" type="button" disabled={saving} onClick={startOrCancelEditing}>Cancel</button>
+							<button className="rs-btn" disabled={saving}>{saving ? "Saving…" : policy ? "Save change" : "Save workspace"}</button>
+							<button className="rs-quiet" type="button" disabled={saving} onClick={startOrCancelEditing}>Cancel</button>
 						</div>
 					</form>
 				)}

@@ -351,8 +351,8 @@ function ScheduleForm({
 			</div>
 			{displayedError && <p className="workspaces-error">{displayedError}</p>}
 			<div className="checkpoint-preview-actions room-schedules-form-actions">
-				<button className="landing-action" type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
-				<button className="inline-action" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
+				<button className="rs-btn" type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+				<button className="rs-quiet" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
 			</div>
 		</form>
 	);
@@ -696,16 +696,16 @@ function ScheduleJobCard({
 					<p className="room-schedules-prompt"><span>Prompt preview:</span> {promptPreview || "No prompt text recorded."}</p>
 					{error && <p className="workspaces-error">{error}</p>}
 					<div className="room-schedules-job-actions">
-						<button className="inline-action" type="button" onClick={onEdit} disabled={actionDisabled}>Edit</button>
-						<button className="inline-action" type="button" onClick={onToggleEnabled} disabled={actionDisabled}>{toggling ? "Saving…" : job.enabled ? "Disable" : "Enable"}</button>
-						<button className="inline-action room-schedules-delete-action" type="button" onClick={onRequestDelete} disabled={actionDisabled}>Delete</button>
+						<button className="rs-quiet" type="button" onClick={onEdit} disabled={actionDisabled}>Edit</button>
+						<button className="rs-quiet" type="button" onClick={onToggleEnabled} disabled={actionDisabled}>{toggling ? "Saving…" : job.enabled ? "Disable" : "Enable"}</button>
+						<button className="rs-quiet rs-quiet-danger" type="button" onClick={onRequestDelete} disabled={actionDisabled}>Delete</button>
 					</div>
 					{confirmingDelete && (
 						<div className="room-schedules-delete-confirm">
 							<p>Delete this schedule record? This only removes the saved record.</p>
 							<div className="room-schedules-job-actions">
-								<button className="inline-action room-schedules-delete-action" type="button" onClick={onConfirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
-								<button className="inline-action" type="button" onClick={onCancelDelete} disabled={deleting}>Cancel</button>
+								<button className="rs-btn rs-btn-danger" type="button" onClick={onConfirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
+								<button className="rs-quiet" type="button" onClick={onCancelDelete} disabled={deleting}>Cancel</button>
 							</div>
 						</div>
 					)}
@@ -863,29 +863,33 @@ export function RoomScheduledTasksSection({ status }: { status: PersistentAgentS
 
 	return (
 		<div className="room-schedules-section">
+			<header className="rs-pane-head">
+				<h3>Scheduled tasks</h3>
+				{!createOpen && canLoadSchedules && !loading && !error && (
+					<div className="rs-pane-actions">
+						<button
+							className="rs-btn"
+							type="button"
+							onClick={() => {
+								setCreateOpen(true);
+								setCreateError(null);
+								setJobError(null);
+								setMessage(null);
+								setEditingJobId(null);
+								setConfirmDeleteJobId(null);
+							}}
+							disabled={Boolean(mutation)}
+						>
+							Add schedule
+						</button>
+					</div>
+				)}
+			</header>
+			<p className="rs-pane-sub">Prompts this room runs on its own.</p>
 			<ScheduleSummary latestRun={latestScheduledRun} nextDueAt={derivedNextDueAt} summary={summary} />
 			{message && <p className="workspaces-success">{message}</p>}
 			{loading && <p className="workspaces-empty-state">Loading scheduled tasks…</p>}
 			{error && <div className="workspaces-error">Could not load scheduled tasks: {error}</div>}
-			{!createOpen && canLoadSchedules && !loading && !error && (
-				<div className="room-schedules-actions">
-					<button
-						className="inline-action"
-						type="button"
-						onClick={() => {
-							setCreateOpen(true);
-							setCreateError(null);
-							setJobError(null);
-							setMessage(null);
-							setEditingJobId(null);
-							setConfirmDeleteJobId(null);
-						}}
-						disabled={Boolean(mutation)}
-					>
-						Add schedule
-					</button>
-				</div>
-			)}
 			{createOpen && (
 				<ScheduleForm
 					allowAutoType
@@ -896,7 +900,7 @@ export function RoomScheduledTasksSection({ status }: { status: PersistentAgentS
 					onSave={handleCreate}
 				/>
 			)}
-			{!loading && !error && response && response.jobs.length === 0 && <p className="workspaces-empty-state">No scheduled tasks yet. Add a schedule and this room runs the prompt on its own.</p>}
+			{!loading && !error && response && response.jobs.length === 0 && <p className="workspaces-empty-state">No scheduled tasks yet.</p>}
 			{!loading && !error && response && response.jobs.length > 0 && activeScheduleRows.length === 0 && completedOneTimeRows.length > 0 && (
 				<p className="workspaces-empty-state">No active schedules. Completed one-time schedules are collapsed below.</p>
 			)}

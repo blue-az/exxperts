@@ -41,7 +41,7 @@ Merging to `main` is gated automatically:
 - **A code owner must approve.** The maintainers (see [`.github/CODEOWNERS`](.github/CODEOWNERS)) review every PR; other reviews are welcome but do not replace an owner's approval.
 - **History is append-only.** No force pushes; keep your PR branch and we squash or merge as fits.
 
-The maintainers develop on an internal repository and publish to this one, so after your PR merges it is copied back into the internal mainline. That is normal and nothing you need to do anything about; your authorship is preserved in the commit.
+The maintainers develop on an internal repository and publish to this one. When your PR is accepted, the change is cherry-picked into the internal mainline with you as the commit author and arrives back here with the next sync. Because of that flow, the PR itself shows as closed rather than merged; the closing comment links your landed commit. Your authorship is preserved either way, and the changelog credits you.
 
 ## License
 

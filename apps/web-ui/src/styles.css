@@ -1688,15 +1688,11 @@ strong, b { font-weight: 700; }
 .workspaces-room-header .persistent-agent-header h2 {
 	font-size: 20px;
 }
-.workspaces-row-actions,
 .workspaces-room-body,
 .workspaces-policy-summary,
 .workspaces-default-form {
 	display: flex;
 	gap: 8px;
-}
-.workspaces-row-actions {
-	flex-wrap: wrap;
 }
 .workspaces-room-body,
 .workspaces-policy-summary,
@@ -5409,7 +5405,8 @@ strong, b { font-weight: 700; }
 .mem-map-row { grid-template-columns: minmax(0, 1fr) 110px 56px 78px; align-items: center; }
 .mem-map-row .name { white-space: normal; line-height: 1.35; }
 /* The collapsed Recent Context row — warm tint + amber bar (see per-session on the right). */
-.mem-map-rc { background: color-mix(in srgb, var(--exx-plan) 7%, transparent); border-radius: 6px; }
+/* The pending-sessions accent lives on the bar only — a permanent row tint
+   used to read as a stuck selection next to the too-subtle selected style. */
 .mem-map-rc .bar-fill { background: var(--exx-plan); }
 /* Memory-by-room row: name + bar + one compact meta string. */
 .mem-room-row { grid-template-columns: minmax(0, 1fr) 220px 170px; }
@@ -5427,10 +5424,95 @@ strong, b { font-weight: 700; }
 }
 .mem-close:hover { color: var(--fg); border-color: var(--fg); }
 .mem-learned { display: flex; flex-direction: column; }
-.mem-li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--border-soft); }
+.mem-li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--border-soft); }
 .mem-li:last-child { border-bottom: none; }
 .mem-li-txt { font-size: 13.5px; color: var(--fg-soft); }
 .mem-li-src { font-family: var(--exx-font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* Provenance receipt (memory provenance 2026-07): a quiet Details fold under a
+   recent session reveals when the entry passed the checkpoint gate. */
+.mem-prov-toggle { background: none; border: none; padding: 0; margin-left: 10px; font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; text-decoration: underline dotted; }
+.mem-prov-toggle:hover { color: var(--fg-soft); }
+.mem-prov-open { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
+.mem-prov-body { max-height: 260px; overflow: auto; font-size: 12.5px; line-height: 1.55; color: var(--fg-soft); border: 1px solid var(--border-soft); border-radius: 6px; padding: 6px 10px; }
+.mem-prov-body :first-child { margin-top: 0; }
+.mem-prov-body :last-child { margin-bottom: 0; }
+.mem-prov { font-size: 12px; color: var(--fg-soft); background: color-mix(in srgb, var(--exx-plan) 8%, transparent); border-radius: 6px; padding: 6px 10px; }
+.mem-prov-link { background: none; border: none; padding: 0; font: inherit; color: var(--fg); cursor: pointer; text-decoration: underline; }
+.mem-prov-link:hover { color: var(--exx-plan); }
+/* Reading-panel header actions (full screen + back). */
+.mem-panel-actions { display: flex; gap: 8px; align-items: center; }
+/* Conversation transcript: the stored thread behind a receipt, read-only. */
+.mem-tr { display: flex; flex-direction: column; gap: 10px; max-height: 560px; overflow: auto; padding-right: 4px; }
+/* Height-constrained column flex would squeeze rows (overflow:hidden rows lose
+   their automatic min-height); items keep their size and the container scrolls. */
+.mem-tr > * { flex-shrink: 0; }
+.mem-fullscreen .mem-tr { max-height: none; }
+.mem-tr-user { display: flex; flex-direction: column; gap: 2px; align-self: flex-end; max-width: 88%; }
+.mem-tr-who { font-family: var(--exx-font-mono); font-size: 10.5px; color: var(--muted); text-align: right; }
+.mem-tr-text { white-space: pre-wrap; font-size: 13px; line-height: 1.5; color: var(--fg); background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 10px 10px 3px 10px; padding: 7px 11px; overflow-wrap: anywhere; }
+.mem-tr-assistant { font-size: 13px; line-height: 1.55; color: var(--fg-soft); max-width: 96%; }
+.mem-tr-assistant .md :first-child { margin-top: 0; }
+.mem-tr-assistant .md :last-child { margin-bottom: 0; }
+.mem-tr-system { font-size: 12.5px; line-height: 1.5; color: var(--muted); border-left: 2px solid var(--border); padding-left: 10px; max-width: 96%; }
+.mem-tr-system .md :first-child { margin-top: 0; }
+.mem-tr-system .md :last-child { margin-bottom: 0; }
+.mem-tr-tool { border: 1px solid var(--border-soft); border-radius: 7px; overflow: hidden; }
+.mem-tr-tool-line { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; background: none; border: none; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--muted); }
+.mem-tr-tool-line:hover { color: var(--fg-soft); }
+.mem-tr-caret { font-size: 10px; }
+.mem-tr-tool-name { font-family: var(--exx-font-mono); font-size: 11.5px; color: var(--fg-soft); }
+.mem-tr-tool-status { font-family: var(--exx-font-mono); font-size: 10.5px; }
+.mem-tr-tool-detail { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px; }
+.mem-tr-pre { margin: 0; max-height: 240px; overflow: auto; font-family: var(--exx-font-mono); font-size: 11px; line-height: 1.45; color: var(--fg-soft); background: var(--panel-2); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mem-tr-note { font-size: 11px; color: var(--dim); }
+/* Full-screen overlay for the reading panel. Its own scroll; Esc leaves. */
+.mem-fullscreen { position: fixed; inset: 0; z-index: 80; background: var(--bg); overscroll-behavior: contain; overflow: auto; padding: 24px clamp(16px, 6vw, 96px); }
+.mem-fullscreen-inner { max-width: 1080px; margin: 0 auto; min-height: calc(100% - 8px); }
+/* Memory history: the room's changelog rendered from its event records. */
+.mem-history { margin-top: 18px; }
+.mem-hist-item { border-bottom: 1px solid var(--border-soft); }
+.mem-hist-item:last-of-type { border-bottom: none; }
+.mem-hist-row { display: flex; gap: 12px; align-items: baseline; padding: 7px 2px; }
+.mem-hist-date { flex: 0 0 52px; font-family: var(--exx-font-mono); font-size: 11px; color: var(--muted); }
+.mem-hist-kind { flex: 0 0 88px; font-size: 12px; font-weight: 700; color: var(--fg-soft); }
+.mem-hist-what { font-size: 12.5px; color: var(--fg-soft); min-width: 0; }
+.mem-hist-details { margin-left: auto; flex: 0 0 auto; }
+.mem-hist-more { background: none; border: 1px solid var(--border-soft); border-radius: 6px; padding: 3px 10px; margin-top: 8px; font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.mem-hist-more:hover { color: var(--fg); border-color: var(--fg); }
+/* Time travel: the Learning curve itself is the control (click to place the
+   viewing line); the banner announces past mode above everything it changes. */
+.mem-tt-banner { font-size: 12.5px; color: var(--fg-soft); background: color-mix(in srgb, var(--exx-plan) 8%, transparent); border-left: 3px solid var(--exx-plan); border-radius: 6px; padding: 7px 11px; margin-bottom: 8px; }
+.mem-tt-banner-global { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 14px 0; padding: 10px 14px; }
+.mem-tt-banner-global .mem-close { flex: 0 0 auto; }
+/* "as of" chip on cards rendering a past snapshot. */
+.mem-asof { font-family: var(--exx-font-mono); font-size: 10.5px; color: var(--exx-plan); border: 1px solid color-mix(in srgb, var(--exx-plan) 45%, transparent); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+/* Vitals that are today's figures, not derivable for a past day. */
+.mem-g-today { opacity: 0.55; border-left: 2px dotted var(--dim); padding-left: 12px; }
+.mem-today-note { font-size: 11.5px; color: var(--dim); margin-top: 8px; }
+/* History rows after the viewed moment: recorded, but not yet lived. */
+.mem-hist-future { opacity: 0.38; }
+.mem-youare { display: flex; align-items: center; gap: 10px; font-family: var(--exx-font-mono); font-size: 10.5px; color: var(--exx-plan); padding: 4px 0; }
+.mem-youare::before, .mem-youare::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--exx-plan) 40%, transparent); }
+/* "What changed": before/after diff of a Learn/Review, from its stored snapshots. */
+.mem-diff-note { padding: 2px 2px 10px; }
+.mem-diff { display: flex; flex-direction: column; gap: 10px; padding: 2px 2px 12px; }
+.mem-diff-meta { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.mem-diff-meta .mem-close { flex: 0 0 auto; }
+.mem-diff-hunk { border: 1px solid var(--border-soft); border-radius: 7px; overflow: hidden; }
+.mem-diff-sec { display: flex; justify-content: space-between; gap: 12px; font-family: var(--exx-font-mono); font-size: 10.5px; color: var(--muted); background: var(--panel-2); padding: 4px 10px; border-bottom: 1px solid var(--border-soft); }
+.mem-diff-sec-tok { color: var(--dim); }
+/* Separate change regions inside one section. */
+.mem-diff-hunk-lines + .mem-diff-hunk-lines { border-top: 1px dashed var(--border-soft); margin-top: 6px; padding-top: 6px; }
+.mem-diff-lines { max-height: 320px; overflow: auto; padding: 6px 0; }
+.mem-fullscreen .mem-diff-lines { max-height: none; }
+.mem-diff-line { display: flex; gap: 8px; padding: 1px 10px; font-family: var(--exx-font-mono); font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+.mem-diff-mark { flex: 0 0 10px; user-select: none; }
+.mem-diff-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.mem-diff-line.add { color: var(--fg); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.mem-diff-line.add .mem-diff-mark { color: var(--success); }
+.mem-diff-line.del { background: color-mix(in srgb, var(--error) 9%, transparent); }
+.mem-diff-line.del .mem-diff-text { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--error) 55%, transparent); }
+.mem-diff-line.del .mem-diff-mark { color: var(--error); }
 .mem-growth { margin-top: 12px; color: var(--dim); }
 .mem-growth .sparkline { color: var(--exx-plan); margin-bottom: 4px; }
 /* Catch-up digest banner. */
@@ -5529,7 +5611,6 @@ strong, b { font-weight: 700; }
 .mem-tile .lab { font-family: var(--exx-font-display); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
 .mem-tile .val { font-family: var(--exx-font-display); font-size: 22px; font-weight: 700; margin-top: 2px; }
 .mem-tile .hint { color: var(--muted); font-size: 11px; margin-top: 1px; }
-.mem-topics { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 16px; }
 .mem-inuse { display: flex; gap: 10px; align-items: baseline; margin-bottom: 16px; color: var(--fg-soft); font-size: 13px; line-height: 1.5; }
 .mem-inuse b { color: var(--fg); font-family: var(--exx-font-mono); }
 .mem-inuse .mem-scope-label { flex: 0 0 auto; }
@@ -5543,11 +5624,10 @@ strong, b { font-weight: 700; }
 .mem-tip-title { font-family: var(--exx-font-display); font-weight: 700; font-size: 12.5px; color: var(--fg); }
 .mem-tip-when { font-family: var(--exx-font-mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 .mem-tip-line { font-size: 11.5px; line-height: 1.5; color: var(--fg-soft); }
-.mem-topic-chip { font-size: 12px; color: var(--fg-soft); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 720px) { .mem-exp { grid-template-columns: 1fr; } .mem-tiles { grid-template-columns: repeat(2, 1fr); } }
 /* LLM review / consolidate actions (deep-link to the existing workflows). */
 .mem-detail-actions { display: flex; gap: 8px; align-items: center; }
-.mem-detail-head { align-items: flex-start; margin-bottom: 12px; }
+.mem-detail-head { align-items: flex-start; margin-bottom: 4px; }
 .mem-detail-hero { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .mem-detail-name { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .mem-detail-name h1 {
@@ -5555,19 +5635,23 @@ strong, b { font-weight: 700; }
 	margin: 0; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mem-detail-strip { font-family: var(--exx-font-mono); font-size: 11.5px; }
-.mem-topic-chip.pending { border-style: dashed; color: var(--muted); }
 /* Vitals strip: plain full-width figures between the hero and the chart. */
 .mem-vitals-strip { margin: 2px 0 18px; }
 .mem-vitals-strip .mem-glance-nums { flex-wrap: nowrap; gap: 0; }
 .mem-vitals-strip .mem-g { flex: 1 1 0; min-width: 0; }
 .mem-vitals-strip .mem-g + .mem-g { border-left: 1px solid var(--border-soft); padding-left: 24px; }
-.mem-hero-topics { margin-top: 8px; }
 .mem-detail-section { margin-top: 34px; }
 /* Click-to-read memory map */
 .mem-map-row { cursor: pointer; }
 .mem-map-row:hover .name { color: var(--fg); }
 .mem-map-row:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.mem-map-row.mem-map-sel { background: color-mix(in srgb, var(--exx-plan) 8%, transparent); border-radius: 6px; }
 .mem-map-row.mem-map-sel .name { color: var(--fg); font-weight: 700; }
+/* Card title row with an inline "as of" chip (chart-head defaults to column). */
+.chart-head.mem-head-row { flex-direction: row; align-items: center; gap: 10px; }
+/* The chart is focusable (arrow keys step through time); keep the ring subtle. */
+.mem-chart svg:focus { outline: none; }
+.mem-chart svg:focus-visible { outline: 1px solid var(--exx-plan); outline-offset: 3px; }
 .mem-area-content { max-height: 420px; overflow: auto; font-size: 13px; line-height: 1.55; color: var(--fg-soft); }
 .mem-area-content :first-child { margin-top: 0; }
 .mem-review-btn {
@@ -5579,7 +5663,6 @@ strong, b { font-weight: 700; }
 .mem-review-btn:hover { filter: brightness(1.08); }
 .mem-review-btn:disabled { background: var(--panel-3); color: var(--exx-text-disabled); cursor: not-allowed; }
 .mem-review-btn:disabled:hover { filter: none; }
-.mem-maintain-blocked-note { margin-top: 6px; max-width: 44ch; }
 .mem-absorb-callout {
 	display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
 	border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; background: var(--panel);
@@ -6645,6 +6728,61 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	overflow: hidden;
 }
+/* The rail shell applies only to the room settings modal itself; the class is
+   shared with the create-room and configure-profile dialogs, which stay content-sized. */
+.room-settings-modal.rs-shell {
+	max-width: 960px;
+	height: min(800px, 90vh);
+	max-height: none;
+}
+.room-settings-layout {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+.room-settings-nav {
+	width: 190px;
+	flex-shrink: 0;
+	border-right: 1px solid var(--border-soft);
+	padding: 14px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.rs-nav-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	background: none;
+	border: none;
+	border-radius: 8px;
+	color: var(--muted);
+	font: inherit;
+	font-size: 13.5px;
+	padding: 8px 12px;
+	cursor: pointer;
+}
+.rs-nav-item:hover {
+	color: var(--fg);
+}
+.rs-nav-item.active {
+	color: var(--fg);
+	font-weight: 700;
+	background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.rs-nav-spacer {
+	flex: 1;
+}
+.rs-nav-danger {
+	color: color-mix(in srgb, var(--error) 70%, var(--muted));
+}
+.rs-nav-danger:hover {
+	color: var(--error);
+}
+.rs-nav-danger.active {
+	color: var(--error);
+	background: color-mix(in srgb, var(--error) 8%, transparent);
+}
 .room-settings-head {
 	display: flex;
 	justify-content: space-between;
@@ -6723,6 +6861,12 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	gap: 18px;
 }
+.rs-shell .room-settings-body {
+	flex: 1;
+	min-width: 0;
+	display: block;
+	padding: 20px 24px 26px;
+}
 .room-settings-status {
 	font-size: 10px;
 	font-weight: 700;
@@ -6752,45 +6896,139 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	gap: 12px;
 }
-.room-settings-section + .room-settings-section {
-	border-top: 1px solid var(--border-soft);
-	padding-top: 18px;
+.room-settings-section[hidden] {
+	display: none;
 }
-.room-settings-section h3 {
+/* Room settings shared control language: pane head, sub line, rows, buttons, info marks. */
+.rs-pane-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 16px;
+}
+.rs-pane-head h3 {
 	font-family: "Bandeins Strange", "Sen", sans-serif;
 	font-size: 16px;
 	font-weight: 700;
 	letter-spacing: -0.005em;
 	margin: 0;
 }
-.room-danger-row {
+.rs-pane-actions {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+}
+.rs-pane-sub {
+	margin: -8px 0 4px;
+	color: var(--muted);
+	font-size: 12.5px;
+}
+.rs-info {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	font-size: 10px;
+	font-style: normal;
+	font-weight: 400;
+	color: var(--muted);
+	cursor: help;
+	vertical-align: 1px;
+	margin-left: 6px;
+	flex-shrink: 0;
+}
+.rs-info:focus-visible {
+	outline: 2px solid var(--exx-focus);
+	outline-offset: 2px;
+}
+.rs-row {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	flex-wrap: wrap;
-	gap: 8px 16px;
+	gap: 16px;
+	padding: 12px 0;
 }
-.room-danger-action {
+label.rs-row {
+	cursor: pointer;
+}
+.rs-row + .rs-row {
+	border-top: 1px solid var(--border-soft);
+}
+.rs-row-main {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+.rs-row-label {
+	font-weight: 600;
+	font-size: 14px;
+}
+.rs-row-hint {
+	color: var(--muted);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+.rs-btn {
+	background: none;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	color: var(--fg);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	padding: 6px 12px;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+.rs-btn:hover:not(:disabled),
+.rs-btn:focus-visible {
+	border-color: var(--fg);
+}
+.rs-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.rs-btn-danger {
+	color: var(--error);
+	border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+.rs-btn-danger:hover:not(:disabled),
+.rs-btn-danger:focus-visible {
+	border-color: var(--error);
+}
+.rs-quiet {
 	background: none;
 	border: none;
 	padding: 0;
 	margin: 0;
 	font: inherit;
 	font-size: 13px;
-	font-weight: 600;
-	color: var(--error);
-	cursor: pointer;
-	opacity: 0.85;
-}
-.room-danger-action:hover,
-.room-danger-action:focus-visible {
-	opacity: 1;
+	color: var(--muted);
 	text-decoration: underline;
+	text-underline-offset: 3px;
+	cursor: pointer;
+	flex-shrink: 0;
 }
-.room-danger-action:disabled {
-	opacity: 0.4;
+.rs-quiet:hover:not(:disabled),
+.rs-quiet:focus-visible {
+	color: var(--fg);
+}
+.rs-quiet:disabled {
+	opacity: 0.45;
 	cursor: default;
-	text-decoration: none;
+}
+.rs-quiet-danger {
+	color: color-mix(in srgb, var(--error) 75%, var(--muted));
+}
+.rs-quiet-danger:hover:not(:disabled),
+.rs-quiet-danger:focus-visible {
+	color: var(--error);
 }
 .room-workspace-section,
 .room-schedules-section,
@@ -6810,11 +7048,6 @@ strong, b { font-weight: 700; }
 	color: var(--muted);
 	font-size: 11px;
 	line-height: 1.4;
-}
-.room-schedules-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 8px;
 }
 .room-schedules-form {
 	border: 1px solid var(--border-soft);
@@ -7025,15 +7258,6 @@ strong, b { font-weight: 700; }
 	flex-wrap: wrap;
 	gap: 8px;
 }
-.room-schedules-delete-action {
-	border-color: color-mix(in srgb, var(--error) 28%, var(--border-soft));
-	color: var(--error);
-}
-.room-schedules-delete-action:hover,
-.room-schedules-delete-action:focus-visible {
-	border-color: color-mix(in srgb, var(--error) 54%, var(--border));
-	color: var(--error);
-}
 .room-schedules-delete-confirm {
 	border: 1px solid color-mix(in srgb, var(--error) 24%, var(--border-soft));
 	border-radius: 10px;
@@ -7175,10 +7399,32 @@ strong, b { font-weight: 700; }
 	.room-settings-overlay {
 		padding: 12px;
 	}
+	.room-settings-modal.rs-shell {
+		height: min(92vh, 100%);
+	}
 	.room-settings-head,
 	.room-settings-body {
 		padding-left: 16px;
 		padding-right: 16px;
+	}
+	/* The rail folds into a horizontally scrollable strip on narrow screens. */
+	.room-settings-layout {
+		flex-direction: column;
+	}
+	.room-settings-nav {
+		flex-direction: row;
+		width: auto;
+		overflow-x: auto;
+		border-right: none;
+		border-bottom: 1px solid var(--border-soft);
+		padding: 8px 12px;
+	}
+	.rs-nav-item {
+		white-space: nowrap;
+		width: auto;
+	}
+	.rs-nav-spacer {
+		display: none;
 	}
 	.room-schedules-form-grid {
 		grid-template-columns: 1fr;
@@ -7536,29 +7782,22 @@ strong, b { font-weight: 700; }
 	font-size: 13px;
 	line-height: 1.3;
 }
-.room-maintenance-hint {
-	color: var(--muted);
-	font-size: 12px;
-	line-height: 1.45;
-	margin: 0;
-}
 .room-maintenance-error {
 	color: var(--danger, #c0392b);
 	font-size: 12px;
 }
 .memory-budget-block {
-	display: flex;
 	flex-direction: column;
+	align-items: stretch;
 	gap: 8px;
-	margin-top: 10px;
-	padding-top: 12px;
-	border-top: 1px solid color-mix(in srgb, var(--border-soft) 42%, transparent);
 }
-.memory-budget-row {
+.memory-budget-head {
+	display: flex;
+	align-items: baseline;
 	justify-content: space-between;
-	cursor: default;
+	gap: 16px;
 }
-.memory-budget-row strong {
+.memory-budget-value {
 	font-size: 13px;
 	font-variant-numeric: tabular-nums;
 }
@@ -7572,21 +7811,6 @@ strong, b { font-weight: 700; }
 	opacity: 0.45;
 	cursor: not-allowed;
 }
-.memory-budget-meter {
-	height: 6px;
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--border-soft) 40%, transparent);
-	overflow: hidden;
-}
-.memory-budget-meter-fill {
-	height: 100%;
-	border-radius: 999px;
-	background: var(--exx-plan);
-	transition: width 200ms ease;
-}
-.memory-budget-meter-fill.over {
-	background: var(--warning);
-}
 .memory-budget-usage {
 	margin: 0;
 	color: var(--muted);
@@ -7596,54 +7820,14 @@ strong, b { font-weight: 700; }
 .memory-budget-usage.over {
 	color: var(--warning);
 }
-.memory-budget-bar-row {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-}
-.memory-budget-bar-row .memory-budget-slider,
-.memory-budget-bar-row .memory-budget-meter {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-.memory-budget-bar-label {
-	flex: 0 0 52px;
-	color: var(--muted);
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-}
-
-/* Room settings: progressive disclosure ------------------------------ */
-.room-settings-details {
-	margin: 0;
-}
-.room-settings-details summary {
-	color: var(--muted);
-	cursor: pointer;
-	font-size: 11px;
-	font-weight: 700;
-	line-height: 1.4;
-	width: fit-content;
-}
-.room-settings-details summary:hover,
-.room-settings-details summary:focus-visible {
-	color: var(--fg);
-	outline: none;
-	text-decoration: underline;
-}
-.room-settings-details p {
-	color: var(--muted);
-	font-size: 11px;
-	line-height: 1.5;
-	margin: 6px 0 0;
-}
 
 /* Room settings: workspace summary card ------------------------------ */
 .workspace-summary-card {
 	display: grid;
 	gap: 8px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	padding: 14px 16px;
 }
 .workspace-summary-folder {
 	display: flex;
@@ -7786,37 +7970,12 @@ strong, b { font-weight: 700; }
 	flex-direction: column;
 	gap: 8px;
 }
-.room-session-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	flex-wrap: wrap;
-	gap: 8px 16px;
-}
-.room-session-summary {
-	color: var(--muted);
-	font-size: 12px;
-	line-height: 1.45;
-	margin: 0;
-}
-.room-session-summary strong {
-	color: var(--fg);
-}
 .room-session-confirm {
 	display: grid;
 	gap: 10px;
 }
 
 /* Room settings: delete room ------------------------------------------ */
-.inline-action.room-danger-action {
-	border-color: color-mix(in srgb, var(--error) 28%, var(--border-soft));
-	color: var(--error);
-}
-.inline-action.room-danger-action:hover:not(:disabled),
-.inline-action.room-danger-action:focus-visible {
-	border-color: color-mix(in srgb, var(--error) 54%, var(--border));
-	color: var(--error);
-}
 .room-danger-note {
 	color: var(--muted);
 	font-size: 12px;
@@ -9760,6 +9919,12 @@ strong, b { font-weight: 700; }
 	gap: 2px;
 	min-width: 0;
 }
+.room-skills-name-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
 .room-skills-name {
 	font-weight: 600;
 }
@@ -9815,13 +9980,12 @@ strong, b { font-weight: 700; }
 	color: var(--muted);
 }
 .room-skills-live {
-	font-size: 11px;
-	color: var(--muted);
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--success);
 	text-transform: uppercase;
-	letter-spacing: 0.06em;
-}
-.room-skills-add {
-	align-self: flex-start;
+	letter-spacing: 0.1em;
+	flex-shrink: 0;
 }
 .room-skills-picker {
 	display: grid;

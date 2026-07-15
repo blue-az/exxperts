@@ -98,9 +98,9 @@ npm uninstall -g @exxeta/exxperts-app
 
 Static web assets are served from the packaged Vite dist:
 
-- `/assets/*` — JS/CSS bundles
-- `/brand/*` — logo files
-- `/fonts/*` — local font files copied from `apps/web-ui/public`
+- `/assets/*`: JS/CSS bundles
+- `/brand/*`: logo files
+- `/fonts/*`: local font files copied from `apps/web-ui/public`
 
 ## Bin collision guard
 

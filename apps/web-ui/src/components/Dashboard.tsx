@@ -330,14 +330,14 @@ export function Dashboard() {
 			<section className="dash-section">
 				<div className="dash-section-label">Models</div>
 				<div className="chart-block">
-					<div className="sub bar-list-sub">One entry per model, raw provider ids merged. Select a model to scope the whole page.</div>
+					<div className="sub bar-list-sub">One entry per model. Select a model to scope the whole page.</div>
 					{data.byModel.length === 0 && <div className="sub">No usage recorded yet.</div>}
 					<BarList
 						rows={data.byModel.map((m) => ({
 							key: m.id,
 							name: m.label,
 							cost: m.cost,
-							detail: `${fmtEst(m.cost)}, ${m.turns.toLocaleString()} turn${m.turns === 1 ? "" : "s"}${m.rawIds > 1 ? `, ${m.rawIds} raw ids merged` : ""}`,
+							detail: `${fmtEst(m.cost)}, ${m.turns.toLocaleString()} turn${m.turns === 1 ? "" : "s"}`,
 						}))}
 						shareBase={est}
 						selected={model}

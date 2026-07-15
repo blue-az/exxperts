@@ -5,7 +5,7 @@ When the platform ships an improved constitution template, existing rooms keep
 their old one until you run the upgrade below. The upgrade re-renders the
 constitution from the current template using the room's own identity (its name,
 your name, preferred address). It does **not** touch the room's durable memory
-(`L1b`) — everything the room has learned stays exactly as it is.
+(`L1b`): everything the room has learned stays exactly as it is.
 
 Every upgrade is archived and auditable, like all memory-adjacent mutations in
 exxperts: the previous constitution is copied to `L1a-archive/` inside the room
@@ -15,7 +15,7 @@ folder, and a fingerprinted event record is written under
 ## When to run this
 
 After pulling a version whose release notes mention a new constitution
-template. Running it when nothing changed is safe — rooms already on the
+template. Running it when nothing changed is safe; rooms already on the
 current template are skipped ("already up to date").
 
 ## Steps
@@ -29,7 +29,7 @@ current template are skipped ("already up to date").
 
 2. **Close all rooms.** Quit any open exxperts web or CLI room sessions. The
    upgrade refuses to touch a room that is open somewhere or mid-turn, so
-   nothing can be corrupted — but closing everything first avoids refusals.
+   nothing can be corrupted, but closing everything first avoids refusals.
 
 3. **Preview first (writes nothing):**
 
@@ -66,7 +66,7 @@ current template are skipped ("already up to date").
 6. **Use the room normally.** New sessions boot with the upgraded
    constitution immediately. A room session that was saved before the upgrade
    resumes with its previous boot snapshot and picks up the new constitution
-   at its next checkpoint — that is expected.
+   at its next checkpoint; that is expected.
 
 ## What changes in the room's behavior
 
@@ -90,9 +90,9 @@ of both versions, so the transition stays auditable either way.
 
 ## Troubleshooting
 
-- `room is currently open on surface "…"` — close that web/CLI session (or
+- `room is currently open on surface "…"`: close that web/CLI session (or
   wait for the scheduled run to finish) and re-run.
-- `room runtime state is "…"` — the room has an unfinished turn. Open the
+- `room runtime state is "…"`: the room has an unfinished turn. Open the
   room once, let it settle, close it, and re-run.
-- `agent.json has no user.displayName` — that room predates user identity in
+- `agent.json has no user.displayName`: that room predates user identity in
   its metadata; ask on the dev channel before doing anything manual.

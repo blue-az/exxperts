@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
 	createPersistentAgentInstance,
+	fingerprintL1bSource,
 	listPersistentAgents,
 	type AbsorbEventRecord,
 	type CheckpointEventRecord,
@@ -67,6 +68,12 @@ export interface RoomMemorySummary {
 	id: string;
 	displayName: string;
 	description?: string;
+	/**
+	 * The room has a parked conversation waiting to be resumed — the exact
+	 * condition behind the Rooms page's "standby" chip. False for a settled
+	 * room (which shows no state chip anywhere).
+	 */
+	standbyThread: boolean;
 	/** measured tokens of L1b — this is what's injected into every turn */
 	l1bTokens: number;
 	/** number of top-level memory areas (from the memory map) */
@@ -114,6 +121,54 @@ export interface RecentSession {
 	title: string;
 	tokens: number;
 	ts: number | null;
+	/**
+	 * When the checkpoint that admitted this entry was approved (ISO). Null when
+	 * no event record matches (hand-edited files, pre-schema rooms) — the UI
+	 * shows a receipt only for entries that truly have one.
+	 */
+	approvedAt: string | null;
+	/**
+	 * The entry's full text (without its heading line), so the user can READ
+	 * what the room saved, not just its title. Recent Context is the only
+	 * memory area whose map row has no click-to-read; this fills that hole.
+	 */
+	content: string;
+	/** the gate-written checkpoint id — the key for the conversation endpoint */
+	checkpointId: string | null;
+	/**
+	 * The source conversation's closed-thread file is still on disk, so the
+	 * receipt can offer "open the conversation". False when the record has no
+	 * runtime boundary or the thread file is gone — the UI never shows a link
+	 * it can't honour.
+	 */
+	conversation: boolean;
+}
+
+/**
+ * One memory-changing event for the room's history timeline, composed from the
+ * immutable event records under events/. Read-only provenance: nothing here is
+ * derived from model output.
+ */
+export interface MemoryHistoryEvent {
+	ts: number;
+	kind: "checkpoint" | "learn" | "review";
+	/** the event record's own id (checkpointId / absorbId / structuralReviewId) */
+	id?: string | null;
+	/**
+	 * A before/after diff can be served for this event: its archived snapshot
+	 * is still on disk. Only set for learn/review — the UI never offers "what
+	 * changed" it can't honour.
+	 */
+	diffable?: boolean;
+	/** checkpoint: the kept session's title (older records may lack it) */
+	title?: string | null;
+	/** learn: how many Recent Context sessions were consolidated */
+	sessions?: number | null;
+	/** learn: deep-memory size before/after, estimated tokens */
+	deepTokensBefore?: number | null;
+	deepTokensAfter?: number | null;
+	/** review: deep-memory token delta (negative = trimmed) */
+	tokenDelta?: number | null;
 }
 
 export interface MemoryOverview {
@@ -146,6 +201,8 @@ export interface RoomMemoryDetail extends RoomMemorySummary {
 	memoryMap: StructuralReviewMemoryMapRow[];
 	/** the Recent Context sessions, newest first — sized in tokens */
 	recentSessions: RecentSession[];
+	/** the room's memory changelog, newest first, capped */
+	history: MemoryHistoryEvent[];
 	/** how developed this room's memory is */
 	maturity: RoomMaturity;
 }
@@ -167,10 +224,10 @@ function roomMaturity(summary: RoomMemorySummary): RoomMaturity {
 
 // --- disk readers (defensive: a room may have no checkpoints or no L1b yet) ---
 
-function readCheckpoints(id: string): CheckpointEventRecord[] {
+function readEventRecords<T extends { approvedAt: string }>(id: string, pickDir: (instance: ReturnType<typeof createPersistentAgentInstance>) => string): T[] {
 	let dir: string;
 	try {
-		dir = createPersistentAgentInstance(id).checkpointEventDir();
+		dir = pickDir(createPersistentAgentInstance(id));
 	} catch {
 		return [];
 	}
@@ -178,19 +235,26 @@ function readCheckpoints(id: string): CheckpointEventRecord[] {
 	try {
 		files = fs.readdirSync(dir);
 	} catch {
-		return []; // no checkpoints yet
+		return []; // no events of this kind yet
 	}
-	const records: CheckpointEventRecord[] = [];
+	const records: T[] = [];
 	for (const file of files) {
 		if (!file.endsWith(".json")) continue;
 		try {
-			records.push(JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as CheckpointEventRecord);
+			records.push(JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as T);
 		} catch {
 			// skip an unreadable/partial record rather than failing the whole room
 		}
 	}
-	records.sort((a, b) => Date.parse(a.approvedAt) - Date.parse(b.approvedAt));
-	return records;
+	// A record with a malformed approvedAt would sort unpredictably and ship an
+	// unparseable timestamp to the UI; drop it rather than guess.
+	const usable = records.filter((r) => Number.isFinite(Date.parse(r.approvedAt)));
+	usable.sort((a, b) => Date.parse(a.approvedAt) - Date.parse(b.approvedAt));
+	return usable;
+}
+
+function readCheckpoints(id: string): CheckpointEventRecord[] {
+	return readEventRecords<CheckpointEventRecord>(id, (instance) => instance.checkpointEventDir());
 }
 
 // --- per-room usage join (read from the same usage.jsonl the dashboard uses) ---
@@ -329,9 +393,9 @@ function readRoomL1bInfo(id: string): RoomL1bInfo {
  * a `### RC-#### | STATUS | date | Title` subsection; we surface a human title
  * and the session's current token size (same unit as the memory map).
  */
-function recentContextSessions(recentContext: string): Array<{ title: string; tokens: number; ts: number | null }> {
+function recentContextSessions(recentContext: string): Array<{ id: string | null; checkpointId: string | null; title: string; tokens: number; ts: number | null; content: string }> {
 	const headings = Array.from(recentContext.matchAll(/^###\s+(.+?)\s*$/gm));
-	const out: Array<{ title: string; tokens: number; ts: number | null }> = [];
+	const out: Array<{ id: string | null; checkpointId: string | null; title: string; tokens: number; ts: number | null; content: string }> = [];
 	for (let i = 0; i < headings.length; i++) {
 		const start = headings[i].index ?? 0;
 		const end = i + 1 < headings.length ? (headings[i + 1].index ?? recentContext.length) : recentContext.length;
@@ -341,13 +405,26 @@ function recentContextSessions(recentContext: string): Array<{ title: string; to
 		// guessed checkpoint), so any "ago" we show is factual.
 		const cells = headings[i][1].split("|").map((s) => s.trim()).filter(Boolean);
 		const title = cells.length >= 4 ? cells.slice(3).join(" | ") : headings[i][1].trim();
+		const id = cells.length > 0 && /^RC-\d+$/i.test(cells[0]) ? cells[0].toUpperCase() : null;
 		let ts: number | null = null;
 		const dateMatch = headings[i][1].match(/\d{4}-\d{2}-\d{2}/);
 		if (dateMatch) {
 			const parsed = Date.parse(dateMatch[0]);
 			if (Number.isFinite(parsed)) ts = parsed;
 		}
-		out.push({ title, tokens: structuralReviewMetrics(body).estimatedTokens, ts });
+		// The provenance join key is the checkpoint_id from the rc_metadata
+		// comment the gate wrote into the entry. RC-#### labels are REUSED after
+		// a consolidation clears Recent Context, so joining on the label can
+		// attach a consolidated record's receipt to an unrelated hand-added
+		// entry; checkpoint ids are unique per event. No metadata, no receipt.
+		const rawBody = body.slice(headings[i][0].length);
+		const meta = rawBody.match(/<!--\s*rc_metadata:([\s\S]*?)-->/);
+		const cpMatch = meta ? meta[1].match(/checkpoint_id=([^;\s]+)/) : null;
+		const checkpointId = cpMatch ? cpMatch[1] : null;
+		// Strip the rc_metadata identity comment (and any other HTML comment)
+		// from the readable text, like cleanAreaBody does for the area reader.
+		const content = rawBody.replace(/<!--[\s\S]*?-->/g, "").trim();
+		out.push({ id, checkpointId, title, tokens: structuralReviewMetrics(body).estimatedTokens, ts, content });
 	}
 	return out;
 }
@@ -383,7 +460,7 @@ function buildFullMemoryMap(l1b: string): StructuralReviewMemoryMapRow[] {
 }
 
 /** Read a room's L1b once and return its Recent Context sessions (doc order). */
-function readRoomSessions(id: string): Array<{ title: string; tokens: number; ts: number | null }> {
+function readRoomSessions(id: string): Array<{ id: string | null; checkpointId: string | null; title: string; tokens: number; ts: number | null; content: string }> {
 	try {
 		const parts = extractStructuralReviewSourceParts(createPersistentAgentInstance(id).readL1b());
 		return recentContextSessions(parts.preservedRecentContext);
@@ -499,8 +576,10 @@ function reviewPoint(record: StructuralReviewEventRecord): MemoryGrowthPoint {
 /** Merged growth series: checkpoints + Learn (absorb) + Review (prune), oldest → newest. */
 function growthSeries(id: string, checkpoints: CheckpointEventRecord[]): MemoryGrowthPoint[] {
 	const points = [...checkpoints.map(growthPoint), ...readAbsorbs(id).map(absorbPoint), ...readReviews(id).map(reviewPoint)];
-	points.sort((a, b) => a.ts - b.ts);
-	return points;
+	// A record with a malformed approvedAt parses to ts 0 — as a chart point it
+	// would render a clickable moment at the epoch whose snapshot fetch can
+	// only fail (`at <= 0` is rejected), so it stays out of the series.
+	return points.filter((p) => p.ts > 0).sort((a, b) => a.ts - b.ts);
 }
 
 function summarizeRoom(status: PersistentAgentStatus, payoffByRoom: Map<string, RoomPayoff>): RoomMemorySummary {
@@ -515,6 +594,7 @@ function summarizeRoom(status: PersistentAgentStatus, payoffByRoom: Map<string, 
 		id: status.id,
 		displayName: status.displayName?.trim() || status.id,
 		description: status.description,
+		standbyThread: (status.runtime.state === "standby" || status.runtime.state === "active") && !!status.runtime.activeThreadId,
 		// Total = sum of the composition parts, so the bar and the total always
 		// reconcile (no separately-rounded whole-file estimate that can drift).
 		l1bTokens: info.composition.deep + info.composition.active + info.composition.recent + info.composition.chronos,
@@ -806,6 +886,553 @@ export function readMemoryArea(id: string, areaName: string): MemoryAreaContent 
 	return null;
 }
 
+// --- read a memory's source conversation (for the provenance receipt) -------
+
+/**
+ * A stored conversation item, sanitized for the wire. Thread files carry the
+ * app's own display items (kind user | assistant | tool | system, plus a few
+ * composite kinds we fold into system text); tool args/results can be large,
+ * so both are capped with an explicit truncation flag.
+ */
+export interface TranscriptWireItem {
+	kind: "user" | "assistant" | "tool" | "system";
+	text?: string;
+	/** tool only */
+	name?: string;
+	status?: string;
+	args?: string;
+	result?: string;
+	/** some field on this item was cut to fit the wire caps */
+	truncated?: boolean;
+}
+
+export interface ConversationTranscript {
+	stored: true;
+	checkpointId: string;
+	threadId: string;
+	/** when the checkpoint closed this conversation (epoch ms), if recorded */
+	closedAt: number | null;
+	items: TranscriptWireItem[];
+	/** renderable items in the stored thread; > items.length only when capped */
+	itemsTotal: number;
+}
+
+export type ConversationTranscriptResult = ConversationTranscript | {
+	stored: false;
+	/** no-record: unknown checkpoint id; no-thread: the conversation file is gone */
+	reason: "no-record" | "no-thread";
+};
+
+const TRANSCRIPT_TEXT_CAP = 20_000;
+const TRANSCRIPT_ARGS_CAP = 2_000;
+const TRANSCRIPT_RESULT_CAP = 6_000;
+const TRANSCRIPT_ITEMS_CAP = 400;
+
+function capped(text: string, cap: number): { text: string; truncated: boolean } {
+	return text.length > cap ? { text: text.slice(0, cap) + "\n…", truncated: true } : { text, truncated: false };
+}
+
+/** One stored thread item → wire item, or null for empty/unknown items. */
+function transcriptWireItem(raw: any): TranscriptWireItem | null {
+	if (!raw || typeof raw !== "object") return null;
+	const kind = String(raw.kind ?? "");
+	if (kind === "user" || kind === "assistant" || kind === "system") {
+		const body = capped(String(raw.text ?? "").trim(), TRANSCRIPT_TEXT_CAP);
+		if (!body.text) return null;
+		return { kind, text: body.text, ...(body.truncated ? { truncated: true } : {}) };
+	}
+	if (kind === "tool") {
+		const item: TranscriptWireItem = {
+			kind: "tool",
+			name: String(raw.name ?? "tool").slice(0, 200) || "tool",
+			status: String(raw.status ?? "").slice(0, 80),
+		};
+		let truncated = false;
+		if (raw.args !== undefined) {
+			let argsText: string;
+			try { argsText = JSON.stringify(raw.args, null, 2) ?? ""; } catch { argsText = String(raw.args); }
+			const c = capped(argsText, TRANSCRIPT_ARGS_CAP);
+			item.args = c.text;
+			truncated = truncated || c.truncated;
+		}
+		if (raw.result !== undefined) {
+			let resultText: string;
+			if (typeof raw.result === "string") resultText = raw.result;
+			else { try { resultText = JSON.stringify(raw.result, null, 2) ?? ""; } catch { resultText = String(raw.result); } }
+			const c = capped(resultText, TRANSCRIPT_RESULT_CAP);
+			item.result = c.text;
+			truncated = truncated || c.truncated;
+		}
+		if (truncated) item.truncated = true;
+		return item;
+	}
+	// Composite display kinds fold into readable system text — the transcript
+	// stays honest ("a consult happened, here is what was asked and answered")
+	// without the UI needing to know every display-cache shape.
+	if (kind === "consult") {
+		const room = String(raw.targetDisplayName ?? raw.targetRoomId ?? "another exxpert").trim();
+		const exchanges: any[] = Array.isArray(raw.exchanges) && raw.exchanges.length
+			? raw.exchanges
+			: [{ question: raw.question, answer: raw.answer }];
+		const parts = exchanges.map((x) => `**Asked:** ${String(x?.question ?? "").trim()}\n\n${String(x?.answer ?? "").trim()}`);
+		const body = capped(`Consulted **${room}**\n\n${parts.join("\n\n")}`.trim(), TRANSCRIPT_TEXT_CAP);
+		return { kind: "system", text: body.text, ...(body.truncated ? { truncated: true } : {}) };
+	}
+	if (kind === "approval") {
+		const title = String(raw.title ?? "").trim() || "Approval";
+		const message = String(raw.message ?? "").trim();
+		const body = capped(`${title}${message ? `: ${message}` : ""}${raw.done ? " (resolved)" : ""}`, TRANSCRIPT_TEXT_CAP);
+		return { kind: "system", text: body.text, ...(body.truncated ? { truncated: true } : {}) };
+	}
+	if (kind === "task") {
+		const title = String(raw.title ?? "").trim() || "Specialist task";
+		const summary = String(raw.summary ?? "").trim();
+		const body = capped(`Specialist task: **${title}**${summary ? `\n\n${summary}` : ""}`, TRANSCRIPT_TEXT_CAP);
+		return { kind: "system", text: body.text, ...(body.truncated ? { truncated: true } : {}) };
+	}
+	return null; // a future display kind — skipped, counted in itemsTotal
+}
+
+/**
+ * The conversation a checkpoint receipt points at, read from the room's own
+ * closed-thread file (write-once after the boundary). The chain is exactly
+ * what the records prove: checkpoint id → event record →
+ * runtimeBoundary.closedThreadId → runtime/threads/<id>.json. Read-only; a
+ * missing link returns stored:false rather than a guess.
+ */
+export function readConversationTranscript(id: string, checkpointIdRaw: string): ConversationTranscriptResult | null {
+	let instance: ReturnType<typeof createPersistentAgentInstance>;
+	try {
+		instance = createPersistentAgentInstance(id);
+	} catch {
+		return null;
+	}
+	let record: CheckpointEventRecord;
+	try {
+		// The path helper validates the id (rejects separators/traversal).
+		record = JSON.parse(fs.readFileSync(instance.checkpointEventRecordPath(checkpointIdRaw), "utf-8")) as CheckpointEventRecord;
+	} catch {
+		return { stored: false, reason: "no-record" };
+	}
+	const threadId = record.runtimeBoundary?.closedThreadId;
+	if (!threadId) return { stored: false, reason: "no-thread" };
+	let thread: { items?: unknown[]; closedAt?: number };
+	try {
+		thread = JSON.parse(fs.readFileSync(instance.runtimeThreadPath(threadId), "utf-8"));
+	} catch {
+		return { stored: false, reason: "no-thread" };
+	}
+	const rawItems = Array.isArray(thread.items) ? thread.items : [];
+	const items: TranscriptWireItem[] = [];
+	// itemsTotal counts the RENDERABLE items in the stored thread, so
+	// itemsTotal > items.length means exactly one thing: the cap cut the tail
+	// (the UI's truncation note must never fire for merely-skipped internals).
+	let renderable = 0;
+	for (const raw of rawItems) {
+		const item = transcriptWireItem(raw);
+		if (!item) continue;
+		renderable++;
+		if (items.length < TRANSCRIPT_ITEMS_CAP) items.push(item);
+	}
+	return {
+		stored: true,
+		checkpointId: record.checkpointId,
+		threadId,
+		closedAt: typeof thread.closedAt === "number" ? thread.closedAt : (record.runtimeBoundary?.closedAt ?? null),
+		items,
+		itemsTotal: renderable,
+	};
+}
+
+// --- what a Learn/Review changed: before/after from the archive chain -------
+
+/**
+ * Every gate event archives the L1b it replaced (paths.archivedL1bRelPath), so
+ * the archives form a chain of recorded states: the state AFTER event N is the
+ * archive of the next event, or today's document when N is the latest. Nothing
+ * is reconstructed — only recorded snapshots are served.
+ */
+interface ArchiveChainLink {
+	ts: number;
+	archivedRelPath: string;
+}
+
+/** An event record's archived-snapshot rel path, tolerating older records. */
+function archivedRelPathOf(instance: ReturnType<typeof createPersistentAgentInstance>, record: { paths?: { archivedL1bRelPath?: string }; archivedL1bPath?: string }): string | null {
+	if (record.paths?.archivedL1bRelPath) return record.paths.archivedL1bRelPath;
+	// Deprecated absolute-path field on older records — usable only when it
+	// still resolves inside the room's root.
+	if (record.archivedL1bPath) {
+		try {
+			return instance.rootRelativePath(record.archivedL1bPath);
+		} catch {
+			return null;
+		}
+	}
+	return null;
+}
+
+/** All archived snapshots across the three event kinds, oldest first, existing files only. */
+function archiveChain(id: string): ArchiveChainLink[] {
+	let instance: ReturnType<typeof createPersistentAgentInstance>;
+	try {
+		instance = createPersistentAgentInstance(id);
+	} catch {
+		return [];
+	}
+	const links: ArchiveChainLink[] = [];
+	const push = (record: { approvedAt: string; paths?: { archivedL1bRelPath?: string }; archivedL1bPath?: string }) => {
+		const ts = Date.parse(record.approvedAt);
+		if (!Number.isFinite(ts)) return; // NaN would perturb the sort
+		const rel = archivedRelPathOf(instance, record);
+		if (!rel) return;
+		try {
+			if (fs.existsSync(instance.resolveRootRelativePath(rel))) links.push({ ts, archivedRelPath: rel });
+		} catch {
+			// unresolvable path — skip the link rather than fail the chain
+		}
+	};
+	for (const record of readCheckpoints(id)) push(record);
+	for (const record of readEventRecords<AbsorbEventRecord>(id, (i) => i.absorbEventDir())) push(record);
+	for (const record of readEventRecords<StructuralReviewEventRecord>(id, (i) => i.structuralReviewEventDir())) push(record);
+	links.sort((a, b) => a.ts - b.ts);
+	return links;
+}
+
+/** Strip schema/HTML comments (rc_metadata etc.) from a snapshot for reading/diffing. */
+function stripDocComments(text: string): string {
+	return text.replace(/<!--[\s\S]*?-->/g, "").trim();
+}
+
+/** One memory section's before/after texts for the change view. */
+export interface MemoryEventSectionDiff {
+	section: string;
+	/** the section's text before the event, comments stripped ("" if absent) */
+	beforeText: string;
+	/** the section's text in the next recorded state ("" if absent) */
+	afterText: string;
+	beforeTokens: number;
+	afterTokens: number;
+}
+
+export interface MemoryEventDiff {
+	kind: "learn" | "review";
+	eventId: string;
+	approvedAt: string;
+	/**
+	 * The changed sections only, document order, each carrying its full
+	 * before/after text. Splitting happens BEFORE diffing, so a change can
+	 * never be attributed to the wrong section.
+	 */
+	sections: MemoryEventSectionDiff[];
+	/** where the after side came from: the next event's archive, or today's document */
+	afterBasis: "next-archive" | "current";
+	/**
+	 * The after side hashes to the fingerprint this record stored at write
+	 * time — the diff shows exactly what this event changed. False means the
+	 * memory also changed outside the gate before the next recorded state;
+	 * null when the record carries no fingerprint to check against.
+	 */
+	afterVerified: boolean | null;
+}
+
+/**
+ * A document's sections for the change view: the review-target's top-level
+ * sections plus Recent sessions and Timeline, named like the memory map.
+ */
+function diffSectionsOf(raw: string): Array<{ name: string; text: string }> {
+	try {
+		const parts = extractStructuralReviewSourceParts(raw);
+		const out: Array<{ name: string; text: string }> = [];
+		const src = parts.sourceReviewTargetL1b;
+		const headings = Array.from(src.matchAll(/^##\s+(.+?)\s*$/gm));
+		for (let i = 0; i < headings.length; i++) {
+			const start = (headings[i].index ?? 0) + headings[i][0].length;
+			const end = i + 1 < headings.length ? (headings[i + 1].index ?? src.length) : src.length;
+			out.push({ name: headings[i][1].trim(), text: stripDocComments(src.slice(start, end)) });
+		}
+		out.push({ name: "Recent sessions", text: stripDocComments(parts.preservedRecentContext).replace(/^\s*#{1,6}\s+.+$/m, "").trim() });
+		out.push({ name: "Timeline", text: cleanAreaBody(parts.preservedChronos) });
+		return out;
+	} catch {
+		// Legacy/malformed topology — one honest whole-document section.
+		return [{ name: "Memory", text: stripDocComments(raw) }];
+	}
+}
+
+/**
+ * What a Learn or Review actually changed: the event's own archived snapshot
+ * against the next recorded state. Read-only; null when the event or its
+ * archive is gone (the UI only offers the diff for `diffable` events).
+ */
+export function readMemoryEventDiff(id: string, kind: "learn" | "review", eventIdRaw: string): MemoryEventDiff | null {
+	let instance: ReturnType<typeof createPersistentAgentInstance>;
+	try {
+		instance = createPersistentAgentInstance(id);
+	} catch {
+		return null;
+	}
+	let record: AbsorbEventRecord | StructuralReviewEventRecord;
+	try {
+		// The path helpers validate the event id (rejects separators/traversal).
+		const file = kind === "learn" ? instance.absorbEventRecordPath(eventIdRaw) : instance.structuralReviewEventRecordPath(eventIdRaw);
+		record = JSON.parse(fs.readFileSync(file, "utf-8"));
+	} catch {
+		return null;
+	}
+	const ts = Date.parse(record.approvedAt);
+	if (!Number.isFinite(ts)) return null;
+	const beforeRel = archivedRelPathOf(instance, record);
+	if (!beforeRel) return null;
+	let beforeRaw: string;
+	try {
+		beforeRaw = fs.readFileSync(instance.resolveRootRelativePath(beforeRel), "utf-8");
+	} catch {
+		return null;
+	}
+	// The state after this event is the next recorded snapshot: the earliest
+	// strictly-later archive, or today's document when this is the latest event.
+	const next = archiveChain(id).find((link) => link.ts > ts);
+	let afterRaw: string | null = null;
+	let afterBasis: MemoryEventDiff["afterBasis"] = "current";
+	if (next) {
+		try {
+			afterRaw = fs.readFileSync(instance.resolveRootRelativePath(next.archivedRelPath), "utf-8");
+			afterBasis = "next-archive";
+		} catch {
+			afterRaw = null;
+		}
+	}
+	if (afterRaw === null) {
+		try {
+			afterRaw = instance.readL1b();
+			afterBasis = "current";
+		} catch {
+			return null;
+		}
+	}
+	const storedFingerprint = record.result?.l1bFingerprint?.value;
+	const afterVerified = storedFingerprint ? fingerprintL1bSource(afterRaw).value === storedFingerprint : null;
+	// Split first, diff per section: pair the two sides by section name (after
+	// side's order wins, before-only sections appended) and keep only the
+	// sections whose text actually differs.
+	const beforeSections = diffSectionsOf(beforeRaw);
+	const afterSections = diffSectionsOf(afterRaw);
+	const beforeByName = new Map(beforeSections.map((s) => [s.name, s.text]));
+	const afterByName = new Map(afterSections.map((s) => [s.name, s.text]));
+	const names = [...afterSections.map((s) => s.name), ...beforeSections.filter((s) => !afterByName.has(s.name)).map((s) => s.name)];
+	const sections: MemoryEventSectionDiff[] = [];
+	for (const name of names) {
+		const beforeText = beforeByName.get(name) ?? "";
+		const afterText = afterByName.get(name) ?? "";
+		if (beforeText === afterText) continue;
+		sections.push({
+			section: name,
+			beforeText,
+			afterText,
+			beforeTokens: structuralReviewMetrics(beforeText).estimatedTokens,
+			afterTokens: structuralReviewMetrics(afterText).estimatedTokens,
+		});
+	}
+	return {
+		kind,
+		eventId: kind === "learn" ? (record as AbsorbEventRecord).absorbId : (record as StructuralReviewEventRecord).structuralReviewId,
+		approvedAt: record.approvedAt,
+		sections,
+		afterBasis,
+		afterVerified,
+	};
+}
+
+// --- time travel: the memory as it was at a past moment ---------------------
+
+export interface MemorySnapshot {
+	/** the requested moment (epoch ms) */
+	at: number;
+	/**
+	 * archive: the state recorded just before the first event after `at` —
+	 * exactly what the memory held at that moment. current: `at` is after the
+	 * last recorded event, so this is today's document.
+	 */
+	basis: "archive" | "current";
+	/** the boundary event's approval time (epoch ms) for archive snapshots */
+	boundaryTs: number | null;
+	/** the full snapshot text, comments stripped (the "Read all" document) */
+	content: string;
+	estimatedTokens: number;
+	/** the memory map of that moment — same rows and measuring as the live map */
+	memoryMap: StructuralReviewMemoryMapRow[];
+	/** readable body per map area of that moment, keyed by area name */
+	areas: Record<string, string>;
+	/** the Recent Context sessions of that moment, newest first, with receipts */
+	recentSessions: RecentSession[];
+	/** token split by layer at that moment */
+	composition: MemoryComposition;
+}
+
+/**
+ * Everything the detail view shows about a memory document, derived from one
+ * snapshot text with the exact same code paths as the live view — so a past
+ * state renders like today's, and the map can never disagree with the content.
+ */
+function deriveSnapshotView(id: string, raw: string): Pick<MemorySnapshot, "content" | "estimatedTokens" | "memoryMap" | "areas" | "recentSessions" | "composition"> {
+	const areas: Record<string, string> = {};
+	let recentSessions: RecentSession[] = [];
+	let composition: MemoryComposition;
+	try {
+		const parts = extractStructuralReviewSourceParts(raw);
+		const src = parts.sourceReviewTargetL1b;
+		const headings = Array.from(src.matchAll(/^##\s+(.+?)\s*$/gm));
+		for (let i = 0; i < headings.length; i++) {
+			const start = (headings[i].index ?? 0) + headings[i][0].length;
+			const end = i + 1 < headings.length ? (headings[i + 1].index ?? src.length) : src.length;
+			areas[headings[i][1].trim()] = cleanAreaBody(src.slice(start, end));
+		}
+		areas["Timeline"] = cleanAreaBody(parts.preservedChronos);
+		recentSessions = sessionsWithReceipts(id, recentContextSessions(parts.preservedRecentContext));
+		const durable = structuralReviewMetrics(src).estimatedTokens;
+		const deepBody = topSectionBody(src, "Deep Memory");
+		const deep = deepBody !== null ? structuralReviewMetrics(deepBody).estimatedTokens : durable;
+		composition = {
+			deep,
+			active: Math.max(0, durable - deep),
+			recent: structuralReviewMetrics(parts.preservedRecentContext).estimatedTokens,
+			chronos: structuralReviewMetrics(parts.preservedChronos).estimatedTokens,
+		};
+	} catch {
+		// Legacy/malformed topology — everything counts as deep, no session split.
+		composition = { deep: structuralReviewMetrics(raw).estimatedTokens, active: 0, recent: 0, chronos: 0 };
+	}
+	return {
+		content: stripDocComments(raw),
+		estimatedTokens: structuralReviewMetrics(raw).estimatedTokens,
+		memoryMap: buildFullMemoryMap(raw),
+		areas,
+		recentSessions,
+		composition,
+	};
+}
+
+/**
+ * The room's memory as it was at `at`, from the archive chain: every gate
+ * event stored the document it replaced, so the state at any past moment is
+ * the archive of the first event after that moment (or today's document when
+ * no later event exists). Recorded snapshots only — nothing reconstructed.
+ */
+export function readMemorySnapshotAt(id: string, at: number): MemorySnapshot | null {
+	let instance: ReturnType<typeof createPersistentAgentInstance>;
+	try {
+		instance = createPersistentAgentInstance(id);
+	} catch {
+		return null;
+	}
+	const next = archiveChain(id).find((link) => link.ts > at);
+	if (next) {
+		let raw: string;
+		try {
+			raw = fs.readFileSync(instance.resolveRootRelativePath(next.archivedRelPath), "utf-8");
+		} catch {
+			return null;
+		}
+		return { at, basis: "archive", boundaryTs: next.ts, ...deriveSnapshotView(id, raw) };
+	}
+	let raw: string;
+	try {
+		raw = instance.readL1b();
+	} catch {
+		return null;
+	}
+	return { at, basis: "current", boundaryTs: null, ...deriveSnapshotView(id, raw) };
+}
+
+/**
+ * Provenance join for a set of Recent Context sessions: a gated entry names
+ * its admitting event in the rc_metadata comment (checkpoint_id, unique per
+ * event). RC-#### labels are reused after consolidations, so they are display
+ * only, never a join key; an entry without the metadata (hand-edited files)
+ * honestly gets no receipt, even if it reuses a consolidated entry's label.
+ * The receipt offers "open the conversation" only while the closed-thread
+ * file the record names is actually on disk. Returns newest first.
+ */
+function sessionsWithReceipts(id: string, sessions: Array<{ id: string | null; checkpointId: string | null; title: string; tokens: number; ts: number | null; content: string }>): RecentSession[] {
+	const receiptByCheckpoint = new Map<string, { approvedAt: string; conversation: boolean }>();
+	for (const record of readCheckpoints(id)) {
+		if (!record.checkpointId) continue;
+		let conversation = false;
+		const threadId = record.runtimeBoundary?.closedThreadId;
+		if (threadId) {
+			try {
+				conversation = fs.existsSync(createPersistentAgentInstance(id).runtimeThreadPath(threadId));
+			} catch {
+				conversation = false;
+			}
+		}
+		receiptByCheckpoint.set(record.checkpointId, { approvedAt: record.approvedAt, conversation });
+	}
+	return [...sessions]
+		.reverse()
+		.map((s) => {
+			const receipt = s.checkpointId ? receiptByCheckpoint.get(s.checkpointId) : undefined;
+			return { title: s.title, tokens: s.tokens, ts: s.ts, approvedAt: receipt?.approvedAt ?? null, content: s.content, checkpointId: s.checkpointId, conversation: receipt?.conversation ?? false };
+		});
+}
+
+/** History entries returned per room — plenty for the timeline, bounded for the wire. */
+const MEMORY_HISTORY_CAP = 40;
+
+/**
+ * The room's memory changelog, composed from the immutable event records. Every
+ * entry is a change the user approved (or auto-applied under their setting);
+ * newest first, capped.
+ */
+function buildMemoryHistory(id: string): MemoryHistoryEvent[] {
+	const events: MemoryHistoryEvent[] = [];
+	// Records carry no entry title today (approvedEntry.title is forward-compat,
+	// never written); while the RC entry is still in the L1b, its heading
+	// supplies one. The join is the entry's checkpoint_id from its rc_metadata
+	// comment, unique per event, so a title can only come from the exact entry
+	// this record admitted (false provenance is worse than none).
+	const titleByCheckpoint = new Map<string, string>();
+	for (const s of readRoomSessions(id)) if (s.checkpointId) titleByCheckpoint.set(s.checkpointId, s.title);
+	// "What changed" is offered only while the event's archived snapshot is
+	// still on disk — never a control the server can't honour.
+	const diffable = (record: { paths?: { archivedL1bRelPath?: string }; archivedL1bPath?: string }): boolean => {
+		try {
+			const instance = createPersistentAgentInstance(id);
+			const rel = archivedRelPathOf(instance, record);
+			return rel ? fs.existsSync(instance.resolveRootRelativePath(rel)) : false;
+		} catch {
+			return false;
+		}
+	};
+	for (const record of readCheckpoints(id)) {
+		const fallback = record.checkpointId ? titleByCheckpoint.get(record.checkpointId) : undefined;
+		events.push({ ts: Date.parse(record.approvedAt), kind: "checkpoint", id: record.checkpointId ?? null, title: record.checkpoint?.approvedEntry?.title ?? fallback ?? null });
+	}
+	for (const record of readEventRecords<AbsorbEventRecord>(id, (instance) => instance.absorbEventDir())) {
+		const absorb = record.absorb;
+		events.push({
+			ts: Date.parse(record.approvedAt),
+			kind: "learn",
+			id: record.absorbId ?? null,
+			diffable: Boolean(record.absorbId) && diffable(record),
+			sessions: absorb ? Math.max(0, absorb.recentContextEntryCountBefore - absorb.recentContextEntryCountAfter) : null,
+			deepTokensBefore: absorb?.stableMemoryEstimatedTokensBefore ?? null,
+			deepTokensAfter: absorb?.stableMemoryEstimatedTokensAfter ?? null,
+		});
+	}
+	for (const record of readEventRecords<StructuralReviewEventRecord>(id, (instance) => instance.structuralReviewEventDir())) {
+		events.push({
+			ts: Date.parse(record.approvedAt),
+			kind: "review",
+			id: record.structuralReviewId ?? null,
+			diffable: Boolean(record.structuralReviewId) && diffable(record),
+			tokenDelta: record.structuralReview?.reviewTargetEstimatedTokenDelta ?? null,
+		});
+	}
+	return events.filter((e) => Number.isFinite(e.ts)).sort((a, b) => b.ts - a.ts).slice(0, MEMORY_HISTORY_CAP);
+}
+
 export function buildRoomMemory(status: PersistentAgentStatus): RoomMemoryDetail {
 	const summary = summarizeRoom(status, loadPayoffByRoom());
 	let memoryMap: StructuralReviewMemoryMapRow[] = [];
@@ -816,14 +1443,13 @@ export function buildRoomMemory(status: PersistentAgentStatus): RoomMemoryDetail
 	}
 	// Newest first, each carrying its own recorded date (or null) — no guessed
 	// checkpoint pairing, so any time shown belongs to that session.
-	const recentSessions: RecentSession[] = readRoomSessions(status.id)
-		.reverse()
-		.map((s) => ({ title: s.title, tokens: s.tokens, ts: s.ts }));
+	const recentSessions = sessionsWithReceipts(status.id, readRoomSessions(status.id));
 	return {
 		...summary,
 		l1aExists: status.l1a.exists,
 		memoryMap,
 		recentSessions,
+		history: buildMemoryHistory(status.id),
 		maturity: roomMaturity(summary),
 	};
 }

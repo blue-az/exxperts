@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PersistentAgentMementoBoundaryResponse, PersistentAgentStatus } from "../types";
 import { modelDisplayName } from "../model-names";
+import { RsInfo } from "./rs-info";
 
 async function applyMemento(agentId: string, conversationId: string): Promise<PersistentAgentMementoBoundaryResponse> {
 	const response = await fetch(`/api/persistent-agents/${encodeURIComponent(agentId)}/memento`, {
@@ -55,9 +56,19 @@ export function RoomSessionSection({ status, onRefresh }: { status: PersistentAg
 		}
 	}
 
+	const head = (
+		<>
+			<header className="rs-pane-head">
+				<h3>Session</h3>
+			</header>
+			<p className="rs-pane-sub">The conversation this room currently has open.</p>
+		</>
+	);
+
 	if (!activeThread) {
 		return (
 			<div className="room-session-section">
+				{head}
 				<p className="workspaces-empty-state">No open conversation yet. Memento becomes available once the room has one.</p>
 				{message && <div className="workspaces-success">{message}</div>}
 			</div>
@@ -66,23 +77,27 @@ export function RoomSessionSection({ status, onRefresh }: { status: PersistentAg
 
 	return (
 		<div className="room-session-section">
+			{head}
 			{!confirming && (
-				<div className="room-session-row">
-					<p className="room-session-summary">
-						Open conversation{modelLabel ? <> on <strong>{modelLabel}</strong></> : null}{busy ? " (in use)" : ""}
-					</p>
-					<button className="inline-action" disabled={submitting} title="Forget this conversation and start fresh. Nothing is checkpointed" onClick={() => { setConfirming(true); setError(null); setMessage(null); }}>Memento…</button>
+				<div className="rs-row">
+					<div className="rs-row-main">
+						<span className="rs-row-label">
+							Open conversation{modelLabel ? <> on <strong>{modelLabel}</strong></> : null}{busy ? " (in use)" : ""}
+						</span>
+						<span className="rs-row-hint">
+							Memento closes it and the room starts fresh. Memory stays, nothing is checkpointed.
+							<RsInfo text="Useful when the conversation is stuck on a model or provider you no longer have access to." />
+						</span>
+					</div>
+					<button className="rs-btn" disabled={submitting} onClick={() => { setConfirming(true); setError(null); setMessage(null); }}>Memento…</button>
 				</div>
-			)}
-			{!confirming && (
-				<p className="workspaces-session-note">Memento closes the conversation and the room starts fresh. Memory stays and nothing is checkpointed. Useful when the conversation is stuck on a model or provider you no longer have access to.</p>
 			)}
 			{confirming && (
 				<div className="room-session-confirm" ref={confirmRef}>
 					<p className="room-danger-note"><strong>Apply Memento?</strong> The current conversation is forgotten and the room starts fresh. Memory stays and nothing is checkpointed.{busy ? " The room is in use right now: any response being written will be stopped and a live session will be closed." : ""}</p>
 					<div className="room-danger-confirm-actions">
-						<button className="landing-action" disabled={submitting} onClick={() => void submitMemento()}>{submitting ? "Applying…" : "Apply Memento"}</button>
-						<button className="inline-action" type="button" disabled={submitting} onClick={() => { setConfirming(false); setError(null); }}>Cancel</button>
+						<button className="rs-btn" disabled={submitting} onClick={() => void submitMemento()}>{submitting ? "Applying…" : "Apply Memento"}</button>
+						<button className="rs-quiet" type="button" disabled={submitting} onClick={() => { setConfirming(false); setError(null); }}>Cancel</button>
 					</div>
 				</div>
 			)}

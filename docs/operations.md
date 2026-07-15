@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Node.js ≥ 20 (we test on 22).
-- A model provider configured — see [`provider-setup.md`](provider-setup.md)
+- A model provider configured; see [`provider-setup.md`](provider-setup.md)
   for AI profiles (Claude, ChatGPT Plus/Pro, OpenAI-compatible gateway).
   API keys via `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `.env` or shell
   also work.
@@ -91,12 +91,12 @@ All of these can go in `.env` (auto-loaded) or your shell.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Set if not using subscription auth. |
-| `OPENAI_API_KEY` | — | Same. |
-| `EXXETA_KB_VAULTS` | — | Optional override/additional Markdown vault config for the knowledge tools. Primary persistent config is `~/.exxperts/app/kb-vaults.json`. |
+| `ANTHROPIC_API_KEY` | (none) | Set if not using subscription auth. |
+| `OPENAI_API_KEY` | (none) | Same. |
+| `EXXETA_KB_VAULTS` | (none) | Optional override/additional Markdown vault config for the knowledge tools. Primary persistent config is `~/.exxperts/app/kb-vaults.json`. |
 | `EXXETA_SEARCH_PROVIDER` | `disabled` | Web search provider: `disabled`, `searxng`, or `tavily`. |
-| `EXXETA_SEARCH_BASE_URL` | — | Required when `EXXETA_SEARCH_PROVIDER=searxng`, for example `http://127.0.0.1:8888`. Start a local instance with `./scripts/searxng start`. |
-| `EXXETA_SEARCH_API_KEY` | — | Required when `EXXETA_SEARCH_PROVIDER=tavily`. |
+| `EXXETA_SEARCH_BASE_URL` | (none) | Required when `EXXETA_SEARCH_PROVIDER=searxng`, for example `http://127.0.0.1:8888`. Start a local instance with `./scripts/searxng start`. |
+| `EXXETA_SEARCH_API_KEY` | (none) | Required when `EXXETA_SEARCH_PROVIDER=tavily`. |
 | `PORT` | `8787` | Web server port. |
 
 ## Local SearXNG
@@ -175,7 +175,7 @@ bad import path. Run `cd apps/web-ui && npm run build` to surface it.
 
 Room and worker models are locked to the active AI profile. If the
 profile changed since the room was created, the UI names the expected
-model — see [`provider-setup.md`](provider-setup.md).
+model; see [`provider-setup.md`](provider-setup.md).
 
 ## Health checks
 
@@ -195,10 +195,10 @@ Or kill the launcher PID printed by `scripts/exxperts-web`.
 
 What's worth backing up:
 
-- `~/.exxperts/app/` — product/app state: persistent rooms (memory, archives, event records), conversations, schedules, usage, KB/MCP/search config.
-- `~/.exxperts/agent/` — embedded runtime provider/auth/model/session state, including local provider credentials where applicable.
-- `~/.exxeta/` — legacy alpha/prototype product state only if you still have data there.
+- `~/.exxperts/app/`: product/app state, meaning persistent rooms (memory, archives, event records), conversations, schedules, usage, KB/MCP/search config.
+- `~/.exxperts/agent/`: embedded runtime provider/auth/model/session state, including local provider credentials where applicable.
+- `~/.exxeta/`: legacy alpha/prototype product state only if you still have data there.
 - The repo (use git).
-- `.env` — secrets (don't commit).
+- `.env`: secrets (don't commit).
 
 Not worth backing up: `.exxperts-cache/` (dev logs), legacy `.exxeta-cache/` contents, `node_modules/`.

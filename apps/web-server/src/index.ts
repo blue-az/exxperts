@@ -90,7 +90,7 @@ import JSZip from "jszip";
 import { appendUsage, resolveUsageAuthType } from "./usage-log.js";
 import type { UsageKind, UsageRow } from "./usage-log.js";
 import { importHistoricalSessionUsage } from "./usage-import.js";
-import { buildMemoryAskContext, buildMemoryDigest, buildMemoryOverview, buildRoomMemory, readMemoryArea, searchMemory } from "./memory-api.js";
+import { buildMemoryAskContext, buildMemoryDigest, buildMemoryOverview, buildRoomMemory, readConversationTranscript, readMemoryArea, readMemoryEventDiff, readMemorySnapshotAt, searchMemory } from "./memory-api.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.EXXETA_HOME ? path.resolve(process.env.EXXETA_HOME) : path.resolve(__dirname, "..", "..", "..");
@@ -1174,7 +1174,7 @@ app.put("/api/persistent-agents/:id/maintenance-settings", async (req, reply) =>
 	try {
 		const status = getUsablePersistentAgentStatusForNormalUse(idRaw);
 		const body = (req.body ?? {}) as any;
-		const settings = writePersistentRoomMaintenanceSettings(status.id, { fastPathSecondApproval: body.fastPathSecondApproval, memoryBudgetTokens: body.memoryBudgetTokens });
+		const settings = writePersistentRoomMaintenanceSettings(status.id, { fastPathSecondApproval: body.fastPathSecondApproval, quickCheckpointAutoApply: body.quickCheckpointAutoApply, memoryBudgetTokens: body.memoryBudgetTokens });
 		return { agentId: status.id, settings };
 	} catch (e) {
 		return persistentAgentNormalUseErrorReply(reply, e);
@@ -3324,6 +3324,86 @@ app.get("/api/memory/rooms/:id/area", async (req, reply) => {
 	const area = readMemoryArea(id, name);
 	if (!area) return reply.code(404).send({ error: "No such memory area." });
 	return area;
+});
+
+// Read the conversation a memory came from (read-only) — powers the
+// provenance receipt's "open the conversation" in the Memory view. The chain
+// is what the records prove: checkpoint id → event record → closed thread.
+app.get("/api/memory/rooms/:id/conversation", async (req, reply) => {
+	const raw = String((req.params as { id: string }).id ?? "");
+	let id: string;
+	try {
+		id = validatePersistentAgentId(raw);
+	} catch {
+		return reply.code(400).send({ error: "Invalid room id." });
+	}
+	const status = getPersistentAgentStatus(id);
+	if (!status.exists) return reply.code(404).send({ error: "Room not found." });
+	if (isPersistentAgentArchived(status)) return reply.code(410).send({ error: "Room is archived." });
+	const checkpoint = String((req.query as { checkpoint?: string } | undefined)?.checkpoint ?? "").slice(0, 120);
+	if (!checkpoint.trim()) return reply.code(400).send({ error: "Which checkpoint?" });
+	try {
+		const transcript = readConversationTranscript(id, checkpoint);
+		if (!transcript) return reply.code(404).send({ error: "Room not found." });
+		return transcript;
+	} catch (e) {
+		app.log.warn({ err: (e as Error).message }, "failed to read conversation transcript");
+		return reply.code(500).send({ error: "Failed to read this conversation." });
+	}
+});
+
+// What a Learn/Review actually changed (read-only) — powers "What changed" on
+// the Memory history timeline. Before = the event's own archived snapshot;
+// after = the next recorded state in the archive chain (or today's document).
+app.get("/api/memory/rooms/:id/event-diff", async (req, reply) => {
+	const raw = String((req.params as { id: string }).id ?? "");
+	let id: string;
+	try {
+		id = validatePersistentAgentId(raw);
+	} catch {
+		return reply.code(400).send({ error: "Invalid room id." });
+	}
+	const status = getPersistentAgentStatus(id);
+	if (!status.exists) return reply.code(404).send({ error: "Room not found." });
+	if (isPersistentAgentArchived(status)) return reply.code(410).send({ error: "Room is archived." });
+	const q = (req.query as { kind?: string; event?: string } | undefined) ?? {};
+	const kind = String(q.kind ?? "");
+	if (kind !== "learn" && kind !== "review") return reply.code(400).send({ error: "Which kind of event?" });
+	const event = String(q.event ?? "").slice(0, 120);
+	if (!event.trim()) return reply.code(400).send({ error: "Which event?" });
+	try {
+		const diff = readMemoryEventDiff(id, kind, event);
+		if (!diff) return reply.code(404).send({ error: "No stored snapshots for this event." });
+		return diff;
+	} catch (e) {
+		app.log.warn({ err: (e as Error).message }, "failed to read memory event diff");
+		return reply.code(500).send({ error: "Failed to read this event's snapshots." });
+	}
+});
+
+// The room's memory as it was at a past moment (read-only) — powers time
+// travel in the Memory view, from the recorded archive chain only.
+app.get("/api/memory/rooms/:id/snapshot", async (req, reply) => {
+	const raw = String((req.params as { id: string }).id ?? "");
+	let id: string;
+	try {
+		id = validatePersistentAgentId(raw);
+	} catch {
+		return reply.code(400).send({ error: "Invalid room id." });
+	}
+	const status = getPersistentAgentStatus(id);
+	if (!status.exists) return reply.code(404).send({ error: "Room not found." });
+	if (isPersistentAgentArchived(status)) return reply.code(410).send({ error: "Room is archived." });
+	const at = Number((req.query as { at?: string } | undefined)?.at);
+	if (!Number.isFinite(at) || at <= 0) return reply.code(400).send({ error: "Which moment?" });
+	try {
+		const snapshot = readMemorySnapshotAt(id, at);
+		if (!snapshot) return reply.code(404).send({ error: "No stored memory for that moment." });
+		return snapshot;
+	} catch (e) {
+		app.log.warn({ err: (e as Error).message }, "failed to read memory snapshot");
+		return reply.code(500).send({ error: "Failed to read the memory snapshot." });
+	}
 });
 
 app.get("/ws", { websocket: true }, async (socket, req) => {

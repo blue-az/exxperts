@@ -11,6 +11,9 @@ const LINUX_CHOOSE_FOLDER_ARGS = ["--file-selection", "--directory", '--title=Ch
 
 // Prints "OK:<path>" or "CANCEL" so selection, cancellation, and failure are unambiguous.
 // The TopMost owner form keeps the dialog from opening behind the terminal/browser.
+// The script is passed via -EncodedCommand and uses only single-quoted strings: an inline
+// -Command argument with embedded double quotes gets \"-escaped by Node's Windows arg
+// quoting and powershell.exe mis-parses that, so the script never ran on real machines.
 const WINDOWS_CHOOSE_FOLDER_SCRIPT = [
 	"Add-Type -AssemblyName System.Windows.Forms",
 	"$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
@@ -18,8 +21,9 @@ const WINDOWS_CHOOSE_FOLDER_SCRIPT = [
 	"$dialog.ShowNewFolderButton = $true",
 	"$owner = New-Object System.Windows.Forms.Form",
 	"$owner.TopMost = $true",
-	'if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output ("OK:" + $dialog.SelectedPath) } else { Write-Output "CANCEL" }',
+	"if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output ('OK:' + $dialog.SelectedPath) } else { Write-Output 'CANCEL' }",
 ].join("; ");
+const WINDOWS_CHOOSE_FOLDER_ENCODED_COMMAND = Buffer.from(WINDOWS_CHOOSE_FOLDER_SCRIPT, "utf16le").toString("base64");
 
 export type LocalFolderPickerRunner = (command: string, args: string[], options: { timeoutMs: number }) => Promise<{ stdout: string; stderr: string }>;
 
@@ -141,7 +145,7 @@ async function chooseWindowsFolder(options: ChooseLocalFolderOptions = {}): Prom
 	const powershellPath = options.powershellPath ?? DEFAULT_POWERSHELL_PATH;
 
 	try {
-		const result = await runner(powershellPath, ["-NoProfile", "-NonInteractive", "-STA", "-Command", WINDOWS_CHOOSE_FOLDER_SCRIPT], { timeoutMs });
+		const result = await runner(powershellPath, ["-NoProfile", "-STA", "-EncodedCommand", WINDOWS_CHOOSE_FOLDER_ENCODED_COMMAND], { timeoutMs });
 		const output = result.stdout.trim();
 		if (output === "CANCEL") return { ok: true, supported: true, cancelled: true, path: null };
 		if (output.startsWith("OK:")) {

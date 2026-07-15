@@ -6,7 +6,7 @@ Audience: users who need to connect a provider/profile before using persistent-a
 
 There are two setup paths, depending on how the provider authenticates:
 
-- **Subscription (OAuth) providers — Claude, ChatGPT Plus/Pro:** sign in directly from the web app's **AI setup** page. Each profile that is not connected yet shows a **Sign in →** button; it opens the provider's login in a new browser tab, and the page updates when the sign-in completes. The CLI `/login` flow remains available as an alternative — both paths write to the same local credential store.
+- **Subscription (OAuth) providers (Claude, ChatGPT Plus/Pro):** sign in directly from the web app's **AI setup** page. Each profile that is not connected yet shows a **Sign in →** button; it opens the provider's login in a new browser tab, and the page updates when the sign-in completes. The CLI `/login` flow remains available as an alternative; both paths write to the same local credential store.
 - **API-key providers, including the OpenAI-compatible gateway:** set up in the web app: open **AI setup**, then **Add another provider**, then **Set up gateway**; enter the base URL and the model ids your gateway routes, pick the Learn/Review Memory model, then paste your token on the gateway's profile row. The terminal wizard (`exxperts setup openai-compatible`, with the API key entered through the CLI `/login` prompt) remains available as an alternative.
 
 In both cases:
@@ -53,7 +53,7 @@ Open the web app's **AI setup** page. On the **ChatGPT Plus/Pro** profile card, 
 
 One sign-in can run at a time. If your browser blocks the login tab, allow pop-ups for the Exxperts page and retry.
 
-Alternative — CLI `/login`: start the CLI/TUI (`exxperts cli`, `exxperts-cli`, or the repo wrapper `./scripts/exxperts-cli`), run `/login`, select `Use a subscription`, then `ChatGPT Plus/Pro (Codex Subscription)`, and complete the browser OAuth flow. If the CLI/TUI asks you to paste a redirect URL or code, paste it only into the CLI/TUI prompt. Both paths store credentials in the same local auth store.
+Alternative (CLI `/login`): start the CLI/TUI (`exxperts cli`, `exxperts-cli`, or the repo wrapper `./scripts/exxperts-cli`), run `/login`, select `Use a subscription`, then `ChatGPT Plus/Pro (Codex Subscription)`, and complete the browser OAuth flow. If the CLI/TUI asks you to paste a redirect URL or code, paste it only into the CLI/TUI prompt. Both paths store credentials in the same local auth store.
 
 Do not paste redirect URLs, auth codes, tokens, screenshots, or raw auth files into docs, issues, or chat. Provider OAuth labels and browser screens can change outside this repository.
 
@@ -94,7 +94,7 @@ Open the web app's **AI setup** page. On the **Claude** profile card, click **Si
 
 The sign-in flow uses a local callback on port `53692`; one sign-in can run at a time. If your browser blocks the login tab, allow pop-ups for the Exxperts page and retry.
 
-Alternative — CLI `/login`: start the CLI/TUI (`exxperts cli`, `exxperts-cli`, or the repo wrapper `./scripts/exxperts-cli`), run `/login`, select `Use a subscription`, then `Anthropic (Claude Pro/Max)`, and complete the browser OAuth flow. If the CLI/TUI asks you to paste a redirect URL or code, paste it only into the CLI/TUI prompt. Both paths store credentials in the same local auth store.
+Alternative (CLI `/login`): start the CLI/TUI (`exxperts cli`, `exxperts-cli`, or the repo wrapper `./scripts/exxperts-cli`), run `/login`, select `Use a subscription`, then `Anthropic (Claude Pro/Max)`, and complete the browser OAuth flow. If the CLI/TUI asks you to paste a redirect URL or code, paste it only into the CLI/TUI prompt. Both paths store credentials in the same local auth store.
 
 Do not paste redirect URLs, auth codes, tokens, screenshots, or raw auth files into docs, issues, or chat. Anthropic/Claude OAuth labels, browser screens, and account entitlement behavior can change outside this repository.
 
@@ -325,7 +325,7 @@ Status endpoints and UI should be used for readiness checks, not for copying or 
 
 | Symptom | What to check |
 | --- | --- |
-| **Sign in →** does nothing or the login tab never opens | Allow pop-ups for the Exxperts page and retry. Only one sign-in can run at a time — use **Cancel** on the profile card to clear a stuck attempt first. |
+| **Sign in →** does nothing or the login tab never opens | Allow pop-ups for the Exxperts page and retry. Only one sign-in can run at a time; use **Cancel** on the profile card to clear a stuck attempt first. |
 | In-app sign-in reports "Sign-in timed out" | The flow expires after 5 minutes. Retry from **AI setup**; if it keeps failing, try the CLI `/login` path and report a non-secret description. |
 | ChatGPT Plus/Pro or Anthropic option is not visible in `/login` | Confirm you chose `Use a subscription`; provider labels may have changed; escalate with a non-secret description. |
 | OpenAI-compatible gateway is not visible under `/login` → `Use an API key` | Run `exxperts setup openai-compatible` first so runtime `models.json` defines provider `openai-compatible`; restart the CLI/TUI if needed. |
@@ -337,4 +337,4 @@ Status endpoints and UI should be used for readiness checks, not for copying or 
 
 ## Related docs
 
-- [How Exxperts works](how-exxperts-works.md) — where AI profiles and per-process model locks fit in the architecture.
+- [How Exxperts works](how-exxperts-works.md): where AI profiles and per-process model locks fit in the architecture.

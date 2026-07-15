@@ -2,6 +2,10 @@
 
 User-visible changes per release. Historical private/internal development notes are not part of this public-facing changelog.
 
+## Unreleased
+
+- Rooms: quick checkpoints can be set to stop at the review gate per room (Settings, Memory pane) instead of applying automatically. Contributed by [@blue-az](https://github.com/blue-az) in [#2](https://github.com/EXXETA/exxperts/pull/2).
+
 ## 0.6.7 (2026-07-13)
 
 - Skills: a Skills page in the web app to write a skill, upload .md/.zip/.skill files, or import from a repo, with review before accepting. Skills are enabled per room; rooms read them via a `read_skill` tool.

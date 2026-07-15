@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownRenderer } from "./Markdown";
 
 // Room memory telemetry, read from /api/memory (read-only). Rooms remember
@@ -27,6 +27,8 @@ interface RoomSummary {
 	id: string;
 	displayName: string;
 	description?: string;
+	/** the room has a parked conversation to resume (the Rooms "standby" chip) */
+	standbyThread?: boolean;
 	l1bTokens: number;
 	areas: number;
 	checkpoints: number;
@@ -48,6 +50,78 @@ interface RecentSession {
 	title: string;
 	tokens: number;
 	ts: number | null;
+	/** approval time of the checkpoint that admitted this entry (ISO), when a record exists */
+	approvedAt: string | null;
+	/** the entry's full saved text, word for word */
+	content: string;
+	/** the gate-written checkpoint id, the key for the conversation endpoint */
+	checkpointId: string | null;
+	/** the source conversation is still stored, so the receipt can open it */
+	conversation: boolean;
+}
+
+// The stored conversation behind a receipt, sanitized server-side. Composite
+// display items arrive folded into system text; tool args/results are capped.
+interface TranscriptItem {
+	kind: "user" | "assistant" | "tool" | "system";
+	text?: string;
+	name?: string;
+	status?: string;
+	args?: string;
+	result?: string;
+	truncated?: boolean;
+}
+
+type TranscriptResult =
+	| { stored: true; checkpointId: string; threadId: string; closedAt: number | null; items: TranscriptItem[]; itemsTotal: number }
+	| { stored: false; reason: string };
+
+interface MemoryHistoryEvent {
+	ts: number;
+	kind: "checkpoint" | "learn" | "review";
+	/** the event record's own id — the key for the event-diff endpoint */
+	id?: string | null;
+	/** the event's archived snapshot is still stored, so a diff can be shown */
+	diffable?: boolean;
+	title?: string | null;
+	sessions?: number | null;
+	deepTokensBefore?: number | null;
+	deepTokensAfter?: number | null;
+	tokenDelta?: number | null;
+}
+
+// The memory as it was at a past moment, from a recorded archive snapshot —
+// carrying the same shapes the live view renders (map, sessions, composition)
+// so the past looks exactly like the present, just older.
+interface Snapshot {
+	at: number;
+	basis: "archive" | "current";
+	boundaryTs: number | null;
+	content: string;
+	estimatedTokens: number;
+	memoryMap: MemoryMapRow[];
+	areas: Record<string, string>;
+	recentSessions: RecentSession[];
+	composition: { deep: number; active: number; recent: number; chronos: number };
+}
+
+// Before/after snapshot texts for one Learn/Review, from the archive chain,
+// split into memory sections BEFORE diffing so nothing gets mislabeled.
+interface EventSectionDiff {
+	section: string;
+	beforeText: string;
+	afterText: string;
+	beforeTokens: number;
+	afterTokens: number;
+}
+
+interface EventDiff {
+	kind: "learn" | "review";
+	eventId: string;
+	approvedAt: string;
+	sections: EventSectionDiff[];
+	afterBasis: "next-archive" | "current";
+	afterVerified: boolean | null;
 }
 
 interface Overview {
@@ -73,6 +147,7 @@ interface RoomDetail extends RoomSummary {
 	l1aExists: boolean;
 	memoryMap: MemoryMapRow[];
 	recentSessions: RecentSession[];
+	history: MemoryHistoryEvent[];
 	maturity: { level: number; label: string; consolidatedPct: number };
 }
 
@@ -133,15 +208,126 @@ function fmtDelta(n: number): string {
 	return (n < 0 ? "-" : "+") + fmtTok(Math.abs(n));
 }
 
-// Shorten a session title to fit a chip — cut at a word boundary (never
-// mid-word), strip trailing punctuation, and mark truncation with a single "…".
-function shortTopic(title: string, max = 34): string {
-	const t = title.trim().replace(/[\s;:,.+\-]+$/, "");
-	if (t.length <= max) return t;
-	const cut = t.slice(0, max);
-	const sp = cut.lastIndexOf(" ");
-	const base = (sp > 12 ? cut.slice(0, sp) : cut).replace(/[\s;:,.+\-]+$/, "");
-	return base + "…";
+
+/** Absolute short date for history rows and receipts, e.g. "12 Jul". */
+function fmtDayShort(ts: number): string {
+	return new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** Receipt timestamp, e.g. "12 Jul at 14:02". */
+function fmtWhen(iso: string): string {
+	const ts = Date.parse(iso);
+	if (!Number.isFinite(ts)) return iso;
+	const time = new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+	return `${fmtDayShort(ts)} at ${time}`;
+}
+
+/** One history row's text. States what the records prove, nothing more. */
+function historyText(e: MemoryHistoryEvent): string {
+	if (e.kind === "checkpoint") return e.title ? `kept "${e.title}"` : "kept a session summary";
+	if (e.kind === "learn") {
+		const base = e.sessions ? `consolidated ${e.sessions} session${e.sessions === 1 ? "" : "s"} into deep memory` : "consolidated recent sessions into deep memory";
+		const sized = e.deepTokensBefore != null && e.deepTokensAfter != null ? `${base}, deep memory ${fmtTok(e.deepTokensBefore)} to ${fmtTok(e.deepTokensAfter)} tok` : base;
+		return sized;
+	}
+	if (e.tokenDelta == null) return "memory structure reviewed";
+	if (e.tokenDelta < 0) return `review trimmed ${fmtTok(-e.tokenDelta)} tok from deep memory`;
+	if (e.tokenDelta > 0) return `review reorganized deep memory, ${fmtDelta(e.tokenDelta)} tok`;
+	return "structure reviewed, size unchanged";
+}
+
+// --- tiny line differ for "What changed" (no dependency) --------------------
+
+interface DiffLine {
+	type: "same" | "add" | "del";
+	text: string;
+}
+
+/**
+ * Line diff of two snapshot texts: common prefix/suffix trimmed, then an LCS
+ * walk over the middle. Memory documents are a few thousand lines at most; if
+ * the changed middle is ever too large for the table, an honest coarse diff
+ * (everything removed, everything added) beats a frozen tab.
+ */
+function diffLines(beforeText: string, afterText: string): DiffLine[] {
+	const a = beforeText.split("\n");
+	const b = afterText.split("\n");
+	let start = 0;
+	while (start < a.length && start < b.length && a[start] === b[start]) start++;
+	let endA = a.length;
+	let endB = b.length;
+	while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+	const midA = a.slice(start, endA);
+	const midB = b.slice(start, endB);
+	let mid: DiffLine[];
+	if (midA.length * midB.length > 1_000_000) {
+		mid = [...midA.map((text) => ({ type: "del" as const, text })), ...midB.map((text) => ({ type: "add" as const, text }))];
+	} else {
+		const m = midA.length;
+		const n = midB.length;
+		const w = n + 1;
+		const dp = new Uint32Array((m + 1) * w);
+		for (let i = m - 1; i >= 0; i--) {
+			for (let j = n - 1; j >= 0; j--) {
+				dp[i * w + j] = midA[i] === midB[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
+			}
+		}
+		mid = [];
+		let i = 0;
+		let j = 0;
+		while (i < m && j < n) {
+			if (midA[i] === midB[j]) { mid.push({ type: "same", text: midA[i] }); i++; j++; }
+			else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) { mid.push({ type: "del", text: midA[i] }); i++; }
+			else { mid.push({ type: "add", text: midB[j] }); j++; }
+		}
+		while (i < m) mid.push({ type: "del", text: midA[i++] });
+		while (j < n) mid.push({ type: "add", text: midB[j++] });
+	}
+	return [
+		...a.slice(0, start).map((text) => ({ type: "same" as const, text })),
+		...mid,
+		...a.slice(endA).map((text) => ({ type: "same" as const, text })),
+	];
+}
+
+interface DiffHunk {
+	lines: DiffLine[];
+}
+
+/**
+ * Group each contiguous changed region into one removed block followed by one
+ * added block (instead of alternating line by line), so a replacement reads
+ * as "this went out, this came in" while staying the complete diff.
+ */
+function coalesceRuns(lines: DiffLine[]): DiffLine[] {
+	const out: DiffLine[] = [];
+	let dels: DiffLine[] = [];
+	let adds: DiffLine[] = [];
+	const flush = () => { out.push(...dels, ...adds); dels = []; adds = []; };
+	for (const line of lines) {
+		if (line.type === "del") dels.push(line);
+		else if (line.type === "add") adds.push(line);
+		else { flush(); out.push(line); }
+	}
+	flush();
+	return out;
+}
+
+/** Changed lines with two lines of context, split into hunks. */
+function diffHunks(lines: DiffLine[]): DiffHunk[] {
+	const CONTEXT = 2;
+	const changed: number[] = [];
+	for (let i = 0; i < lines.length; i++) if (lines[i].type !== "same") changed.push(i);
+	if (changed.length === 0) return [];
+	const ranges: Array<[number, number]> = [];
+	for (const i of changed) {
+		const lo = Math.max(0, i - CONTEXT);
+		const hi = Math.min(lines.length - 1, i + CONTEXT);
+		const last = ranges[ranges.length - 1];
+		if (last && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+		else ranges.push([lo, hi]);
+	}
+	return ranges.map(([lo, hi]) => ({ lines: lines.slice(lo, hi + 1) }));
 }
 
 function fmtAgo(ts: number | null): string {
@@ -175,7 +361,7 @@ function GrowthChart({ series, height = 56 }: { series: GrowthPoint[]; height?: 
 // area split into deep memory and recent sessions. Every event is a point — a dot
 // for a checkpoint, a filled circle for a Learn, a hollow circle for a Review.
 // Hover any point for its stored details (when, compression, before → after).
-function BreakdownChart({ series, height = 300 }: { series: GrowthPoint[]; height?: number }) {
+function BreakdownChart({ series, height = 300, markerTs = null, onPickTs }: { series: GrowthPoint[]; height?: number; markerTs?: number | null; onPickTs?: (ts: number | null) => void }) {
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
 	// Draw at the container's real width so the chart fills the card instead of
@@ -220,6 +406,21 @@ function BreakdownChart({ series, height = 300 }: { series: GrowthPoint[]; heigh
 	const firstTs = series.find((s) => s.ts > 0)?.ts;
 	const lastTs = [...series].reverse().find((s) => s.ts > 0)?.ts;
 
+	// Time-travel cursor: where the viewed moment sits on the event axis,
+	// interpolated by time between the two bracketing events, clamped to the
+	// drawn range (the chart ends at the last event).
+	const markerX = (() => {
+		if (markerTs == null || n === 0) return null;
+		let j = 0;
+		while (j < n && !(series[j].ts > markerTs)) j++;
+		if (j === 0) return X(0);
+		if (j >= n) return X(n - 1);
+		const t0 = series[j - 1].ts;
+		const t1 = series[j].ts;
+		const f = t1 > t0 ? Math.min(1, Math.max(0, (markerTs - t0) / (t1 - t0))) : 0;
+		return X(j - 1) + (X(j) - X(j - 1)) * f;
+	})();
+
 	// Human-readable detail for a point, from the real stored event values.
 	const info = (i: number): { title: string; when: string | null; lines: string[] } => {
 		const s = series[i];
@@ -256,9 +457,45 @@ function BreakdownChart({ series, height = 300 }: { series: GrowthPoint[]; heigh
 		setHover({ i, x: e.clientX - rect.left, y: e.clientY - rect.top });
 	};
 
+	// The chart is the time-travel control: memory states are discrete (one
+	// per event), so a click snaps the viewing line to the nearest recorded
+	// state. The state after event i is any moment before event i+1 — we pass
+	// the event's own timestamp; the last event's state is today (null).
+	const markerIdx = (() => {
+		if (markerTs == null) return n - 1;
+		let j = 0;
+		while (j < n && !(series[j].ts > markerTs)) j++;
+		return Math.max(0, j - 1);
+	})();
+	const pickIndex = (idx: number) => {
+		if (!onPickTs) return;
+		const clamped = Math.max(0, Math.min(n - 1, idx));
+		onPickTs(clamped >= n - 1 ? null : series[clamped].ts);
+	};
+	const onPlotClick = (e: React.MouseEvent) => {
+		if (!onPickTs || n < 2) return;
+		const rect = wrapRef.current?.getBoundingClientRect();
+		if (!rect) return;
+		// The svg is drawn at the container's real width, so px = viewBox units.
+		const x = e.clientX - rect.left;
+		pickIndex(Math.round(((x - padL) / iW) * (n - 1)));
+	};
+	const onPlotKey = (e: React.KeyboardEvent) => {
+		if (!onPickTs || n < 2) return;
+		if (e.key === "ArrowLeft") { e.preventDefault(); pickIndex(markerIdx - 1); }
+		if (e.key === "ArrowRight") { e.preventDefault(); pickIndex(markerIdx + 1); }
+		if (e.key === "Escape" || e.key === "Home" || e.key === "End") { e.preventDefault(); onPickTs(null); }
+	};
+
 	return (
 		<div className="mem-chart" ref={wrapRef}>
-			<svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: `${H}px`, display: "block" }} role="img" aria-label="Memory over time">
+			<svg
+				viewBox={`0 0 ${W} ${H}`}
+				style={{ width: "100%", height: `${H}px`, display: "block", cursor: onPickTs && n >= 2 ? "crosshair" : undefined }}
+				role={onPickTs && n >= 2 ? "slider" : "img"}
+				aria-label={onPickTs && n >= 2 ? "Memory over time. Click or use arrow keys to view the memory as it was after an earlier event." : "Memory over time"}
+				{...(onPickTs && n >= 2 ? { tabIndex: 0, "aria-valuemin": 0, "aria-valuemax": n - 1, "aria-valuenow": markerIdx, onClick: onPlotClick, onKeyDown: onPlotKey } : {})}
+			>
 				{ticks.map((tv, i) => (
 					<g key={i}>
 						<line x1={padL} y1={Y(tv).toFixed(1)} x2={W - 6} y2={Y(tv).toFixed(1)} stroke="var(--border-soft)" strokeWidth={0.5} />
@@ -315,6 +552,12 @@ function BreakdownChart({ series, height = 300 }: { series: GrowthPoint[]; heigh
 						</g>
 					);
 				})}
+				{markerX !== null && (
+					<g>
+						<line x1={markerX.toFixed(1)} y1={padT} x2={markerX.toFixed(1)} y2={padT + iH} stroke="var(--exx-plan)" strokeWidth={2} />
+						<text x={markerX.toFixed(1)} y={padT - 2} textAnchor="middle" fontSize={9} fill="var(--exx-plan)" fontFamily="var(--exx-font-mono)">viewing</text>
+					</g>
+				)}
 			</svg>
 			{hover && (() => {
 				const nfo = info(hover.i);
@@ -349,27 +592,184 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 	const [tab, setTab] = useState<"overview" | "hivemind">("overview");
 	const searchSeq = useRef(0);
 	const detailRef = useRef<HTMLElement>(null);
-	// Click-to-read memory map: the selected area's actual content (null =
-	// default Recent sessions panel).
-	const [areaSel, setAreaSel] = useState<{ area: string; content: string } | null>(null);
+	// The reading panel's mode: null = the default Recent sessions list; an
+	// area's actual content (click-to-read memory map); or the stored
+	// conversation a receipt points at.
+	type Panel =
+		| { kind: "area"; area: string; content: string }
+		| { kind: "transcript"; cp: string; title: string; state: "loading" | "error"; data?: undefined }
+		| { kind: "transcript"; cp: string; title: string; state: "ready"; data: TranscriptResult };
+	const [panel, setPanel] = useState<Panel | null>(null);
+	// Every panel open/close intent bumps this; a fetch started under an older
+	// intent finds the mismatch on resolve and drops its response, so a slow
+	// area/full-memory read can never override what the user did since.
+	const panelReq = useRef(0);
+	// Reading panel expanded to a full-screen overlay (Esc or ✕ to leave).
+	const [panelFull, setPanelFull] = useState(false);
+	// Folded tool calls the user has opened in the transcript (item indexes).
+	const [openTools, setOpenTools] = useState<Set<number>>(new Set());
+	// Long transcripts render their tail only on request.
+	const [trAll, setTrAll] = useState(false);
+	// Provenance receipt fold, one open at a time (index into recentSessions).
+	const [receiptIdx, setReceiptIdx] = useState<number | null>(null);
+	const [histAll, setHistAll] = useState(false);
+	// "What changed" fold on history rows, one open at a time (event id), with
+	// a per-room cache so re-opening a row doesn't refetch.
+	const [diffOpen, setDiffOpen] = useState<string | null>(null);
+	const [diffFull, setDiffFull] = useState(false);
+	const [diffs, setDiffs] = useState<Record<string, { state: "loading" } | { state: "error" } | { state: "ready"; data: EventDiff }>>({});
 
 	// Expanding a card loads its detail below the grid — bring it into view so
 	// the click visibly "goes somewhere".
 	useEffect(() => {
 		if (detail) detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-		setAreaSel(null);
+		panelReq.current++;
+		setPanel(null);
+		setPanelFull(false);
+		setReceiptIdx(null);
+		setHistAll(false);
+		setDiffOpen(null);
+		setDiffFull(false);
+		setDiffs({});
+		setTtValue(null);
 	}, [detail?.id]);
+
+	// Each panel starts with its tools folded, its tail collapsed, and (when
+	// the panel closes entirely) back in the normal layout.
+	useEffect(() => {
+		setOpenTools(new Set());
+		setTrAll(false);
+		if (!panel) setPanelFull(false);
+	}, [panel]);
+
+	// Esc leaves full screen without closing the panel or the diff fold.
+	useEffect(() => {
+		if (!panelFull && !diffFull) return;
+		const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setPanelFull(false); setDiffFull(false); } };
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [panelFull, diffFull]);
 
 	const openArea = (rowArea: string) => {
 		if (!detail) return;
+		const req = ++panelReq.current;
 		// The Recent sessions row toggles back to the default panel (its full
 		// list already lives there).
-		if (rowArea.startsWith("Recent sessions")) { setAreaSel(null); return; }
+		if (rowArea.startsWith("Recent sessions")) { setPanel(null); return; }
+		// In past mode the section is read from the snapshot itself, so what
+		// you read can never drift from the map you clicked.
+		if (past) {
+			const content = past.areas[rowArea];
+			if (typeof content === "string") setPanel({ kind: "area", area: rowArea, content });
+			return;
+		}
 		fetch(`/api/memory/rooms/${encodeURIComponent(detail.id)}/area?name=${encodeURIComponent(rowArea)}`)
 			.then((r) => (r.ok ? r.json() : null))
-			.then((d) => { if (d && typeof d.content === "string") setAreaSel(d); })
+			.then((d) => { if (req === panelReq.current && d && typeof d.content === "string") setPanel({ kind: "area", area: d.area, content: d.content }); })
 			.catch(() => {});
 	};
+
+	// The whole memory document, end to end, in the reading panel. Today's
+	// document comes from the same snapshot reader (now resolves to current).
+	const openFullMemory = () => {
+		if (!detail) return;
+		const req = ++panelReq.current;
+		if (past) { setPanel({ kind: "area", area: "Full memory", content: past.content }); return; }
+		fetch(`/api/memory/rooms/${encodeURIComponent(detail.id)}/snapshot?at=${Date.now()}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d: Snapshot | null) => { if (req === panelReq.current && d && typeof d.content === "string") setPanel({ kind: "area", area: "Full memory", content: d.content }); })
+			.catch(() => {});
+	};
+
+	// Open the stored conversation behind a receipt in the reading panel. The
+	// in-flight guard keys on the checkpoint id (titles are not unique), so an
+	// out-of-order response can never land under another session's receipt.
+	const openConversation = (s: RecentSession) => {
+		if (!detail || !s.checkpointId) return;
+		panelReq.current++;
+		const cp = s.checkpointId;
+		setPanel({ kind: "transcript", cp, title: s.title, state: "loading" });
+		fetch(`/api/memory/rooms/${encodeURIComponent(detail.id)}/conversation?checkpoint=${encodeURIComponent(cp)}`)
+			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad status"))))
+			.then((d: TranscriptResult) => setPanel((p) => (p?.kind === "transcript" && p.cp === cp ? { kind: "transcript", cp, title: s.title, state: "ready", data: d } : p)))
+			.catch(() => setPanel((p) => (p?.kind === "transcript" && p.cp === cp ? { kind: "transcript", cp, title: s.title, state: "error" } : p)));
+	};
+
+	// Toggle "What changed" on a Learn/Review history row.
+	const toggleDiff = (e: MemoryHistoryEvent) => {
+		if (!detail || !e.id || (e.kind !== "learn" && e.kind !== "review")) return;
+		const key = e.id;
+		if (diffOpen === key) { setDiffOpen(null); setDiffFull(false); return; }
+		setDiffOpen(key);
+		// A cached error is not a cache hit — re-opening the row retries the
+		// fetch instead of pinning "couldn't read" until the next room switch.
+		if (diffs[key] && diffs[key].state !== "error") return;
+		setDiffs((prev) => ({ ...prev, [key]: { state: "loading" } }));
+		fetch(`/api/memory/rooms/${encodeURIComponent(detail.id)}/event-diff?kind=${e.kind}&event=${encodeURIComponent(key)}`)
+			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad status"))))
+			.then((d: EventDiff) => setDiffs((prev) => ({ ...prev, [key]: { state: "ready", data: d } })))
+			.catch(() => setDiffs((prev) => ({ ...prev, [key]: { state: "error" } })));
+	};
+
+	// The open row's diff, computed once per fetched snapshot pair — not per
+	// render (the differ walks the whole documents).
+	const openDiffState = diffOpen ? diffs[diffOpen] : undefined;
+	const openDiffSections = useMemo(
+		() => (openDiffState?.state === "ready"
+			? openDiffState.data.sections.map((sec) => ({ ...sec, hunks: diffHunks(coalesceRuns(diffLines(sec.beforeText, sec.afterText))) }))
+			: null),
+		[openDiffState],
+	);
+
+	// Time travel: the picked past moment (null = today). Scrubbing puts the
+	// WHOLE detail view into past mode — map, sessions and vitals render the
+	// snapshot's data, so the cards can never disagree with each other.
+	const [ttValue, setTtValue] = useState<number | null>(null);
+	const [snap, setSnap] = useState<
+		| { at: number; state: "loading" | "error"; data?: undefined }
+		| { at: number; state: "ready"; data: Snapshot }
+		| null
+	>(null);
+	const setTimeTravel = (v: number | null) => {
+		setTtValue(v);
+		if (v === null) setSnap(null);
+	};
+	// Leave the past the moment another room is picked — before the fetch
+	// effect below, so its cleanup marks any stale request and the new room
+	// can never render the old room's snapshot.
+	useEffect(() => {
+		setTtValue(null);
+		setSnap(null);
+	}, [selected]);
+	// The reading panel and the open receipt fold describe one viewing basis;
+	// moving to another moment (or back to today) would relabel content that
+	// was fetched under the old one, so both close instead.
+	useEffect(() => {
+		panelReq.current++;
+		setPanel(null);
+		setReceiptIdx(null);
+	}, [ttValue]);
+	useEffect(() => {
+		if (!selected || ttValue === null) return;
+		const roomId = selected;
+		const at = ttValue;
+		// The cleanup cancels the debounce timer, but a fetch that already
+		// fired keeps running — `stale` makes sure a slower older response (or
+		// one from a room this view already left) can never install itself
+		// over the moment picked since.
+		let stale = false;
+		setSnap((s) => (s?.state === "ready" ? s : { at, state: "loading" }));
+		const timer = setTimeout(() => {
+			fetch(`/api/memory/rooms/${encodeURIComponent(roomId)}/snapshot?at=${at}`)
+				.then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad status"))))
+				.then((d: Snapshot) => { if (!stale) setSnap({ at, state: "ready", data: d }); })
+				.catch(() => { if (!stale) setSnap({ at, state: "error" }); });
+		}, 250);
+		return () => { stale = true; clearTimeout(timer); };
+	}, [ttValue, selected]);
+	// The snapshot the view is currently rendering (null = today). While a new
+	// scrub position loads, the previous snapshot keeps the view stable.
+	const past = ttValue !== null && snap?.state === "ready" ? snap.data : null;
 
 	// "What changed since you were last here." Read the stored last-visit, diff
 	// against it, and only stamp now() AFTER a successful fetch (so a failure or
@@ -730,8 +1130,15 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 							<div className="dash-section-head mem-detail-head">
 								<div className="mem-detail-hero">
 									<div className="mem-detail-name">
-										<h1>{detail.displayName}.</h1>
-										<span className="mem-pill" title="How developed this exxpert's memory is. It grows with sessions and consolidated deep memory.">{detail.maturity.label}</span>
+										<h1>{detail.displayName}</h1>
+										{/* Exactly the Rooms page's chips: standby while a parked
+										    conversation waits, ready to learn when Learn is due,
+										    and no chip at all for a settled room. */}
+										{detail.standbyThread
+											? <span className="mem-pill" title="This exxpert has a conversation parked to resume.">standby</span>
+											: detail.needsAbsorb
+												? <span className="mem-pill" title="Recent sessions are waiting to be learned into deep memory.">ready to learn</span>
+												: null}
 									</div>
 									{detail.description && <div className="sub">{detail.description}</div>}
 									{(() => {
@@ -749,16 +1156,8 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 											</div>
 										);
 									})()}
-									{detail.knows.length > 0 && (
-										// Learned topics only (deep-memory structure and key phrases) —
-										// pending sessions already have their own panel below.
-										<div className="mem-topics mem-hero-topics">
-											{detail.knows.slice(0, 6).map((k, i) => (
-												<span key={i} className="mem-topic-chip" title={k}>{shortTopic(k, 40)}</span>
-											))}
-										</div>
-									)}
 								</div>
+								{/* The state pill carries the why (tooltip), so no note here. */}
 								<div className="mem-detail-actions">
 									{onMaintain && (() => {
 										const blocked = maintainBlocked?.(detail.id) ?? null;
@@ -770,11 +1169,19 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 									})()}
 									<button type="button" className="mem-close" onClick={() => setSelected(null)}>Close ×</button>
 								</div>
-								{onMaintain && (() => {
-									const blocked = maintainBlocked?.(detail.id) ?? null;
-									return blocked ? <div className="sub mem-maintain-blocked-note">{blocked}</div> : null;
-								})()}
 							</div>
+								{ttValue !== null && (
+									<div className="mem-tt-banner mem-tt-banner-global">
+										<span>
+											{snap?.state === "error" ? "Couldn't read a snapshot for that moment right now."
+												: !past ? "Reading the stored snapshot…"
+												: past.basis === "archive"
+													? <>Viewing this exxpert's memory as it was on <strong>{fmtWhen(new Date(past.at).toISOString())}</strong> ({fmtTok(past.estimatedTokens)} tok then). It has changed since{past.boundaryTs ? <>; the next change came {fmtDayShort(past.boundaryTs)}</> : null}.</>
+													: <>No recorded change after that moment, so this is today's memory. Click further left on the curve to see an earlier state.</>}
+										</span>
+										<button type="button" className="mem-close" onClick={() => setTimeTravel(null)}>Back to today</button>
+									</div>
+								)}
 								{(() => {
 									// Vitals strip: measured figures, written plainly between the hero
 									// and the chart — no card, part of the exxpert's "headline".
@@ -806,35 +1213,43 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 									const w = mem?.weekly;
 									const pct = mem ? Math.round((detail.l1bTokens / mem.budgetTokens) * 100) : 0;
 									const over = pct > 100;
+									// Past mode: sizes come from the snapshot ("then"); figures that
+									// cannot be re-derived for a past day (distillation, 7-day
+									// change, budget) stay visible but marked as today's.
+									const comp = past ? past.composition : detail.composition;
+									const totalTok = past ? comp.deep + comp.active + comp.recent + comp.chronos : detail.l1bTokens;
+									const sessCount = past ? past.recentSessions.length : detail.sessions;
+									const otherTok = past ? comp.active + comp.chronos : other;
+									const then = past ? " then" : "";
 									return (
 										<div className="mem-vitals-strip">
 											<div className="mem-glance-nums">
 												<div className="mem-g" title="This exxpert's whole memory, injected into every turn so it never re-explains what it already knows.">
-													<div className="v">~{fmtTok(detail.l1bTokens)} tok</div>
-													<div className="k">total memory, in every turn</div>
+													<div className="v">~{fmtTok(totalTok)} tok</div>
+													<div className="k">{past ? "total memory then" : "total memory, in every turn"}</div>
 												</div>
 												<div className="mem-g" title="The Deep Memory section: distilled knowledge this exxpert has learned.">
-													<div className="v">{fmtTok(detail.composition.deep)} tok</div>
-													<div className="k">deep memory</div>
+													<div className="v">{fmtTok(comp.deep)} tok</div>
+													<div className="k">deep memory{then}</div>
 												</div>
 												<div className="mem-g" title="Session memories this exxpert hasn't learned into deep memory yet. Listed in full under Recent sessions below.">
-													<div className="v">{fmtTok(detail.composition.recent)} tok</div>
-													<div className="k">{detail.sessions} recent session{detail.sessions === 1 ? "" : "s"}</div>
+													<div className="v">{fmtTok(comp.recent)} tok</div>
+													<div className="k">{sessCount} recent session{sessCount === 1 ? "" : "s"}{then}</div>
 												</div>
-												{other > 0 && (
-													<div className="mem-g" title={`Active items ${fmtInt(detail.composition.active)} tok and timeline ${fmtInt(detail.composition.chronos)} tok. Both are broken out in the Memory map below.`}>
-														<div className="v">{fmtTok(other)} tok</div>
-														<div className="k">active items and timeline</div>
+												{otherTok > 0 && (
+													<div className="mem-g" title={`Active items ${fmtInt(comp.active)} tok and timeline ${fmtInt(comp.chronos)} tok. Both are broken out in the Memory map below.`}>
+														<div className="v">{fmtTok(otherTok)} tok</div>
+														<div className="k">active items and timeline{then}</div>
 													</div>
 												)}
 												{ratio && (
-													<div className="mem-g" title={`Measured across ${learnCount} Learn${learnCount === 1 ? "" : "s"}: ${fmtTok(learnFolds.folded)} tok of recent sessions became ${fmtTok(learnFolds.gained)} tok of new deep memory.`}>
+													<div className={`mem-g${past ? " mem-g-today" : ""}`} title={`Measured across ${learnCount} Learn${learnCount === 1 ? "" : "s"}: ${fmtTok(learnFolds.folded)} tok of recent sessions became ${fmtTok(learnFolds.gained)} tok of new deep memory.`}>
 														<div className="v">{ratio}:1</div>
 														<div className="k">distilled across {learnCount} learn{learnCount === 1 ? "" : "s"}</div>
 													</div>
 												)}
 												{w && (
-													<div className="mem-g" title={w.recorded && w.events > 0 ? `Deep-memory change measured over ${w.events} recorded event${w.events === 1 ? "" : "s"} in the last 7 days${w.wholeHistory ? "; this exxpert's whole history is within the week" : ""}.` : "Deep-memory change over the last 7 days, from recorded events only."}>
+													<div className={`mem-g${past ? " mem-g-today" : ""}`} title={w.recorded && w.events > 0 ? `Deep-memory change measured over ${w.events} recorded event${w.events === 1 ? "" : "s"} in the last 7 days${w.wholeHistory ? "; this exxpert's whole history is within the week" : ""}.` : "Deep-memory change over the last 7 days, from recorded events only."}>
 														{w.recorded && w.events > 0
 															? <div className="v">{fmtDelta(w.deepDelta)} tok</div>
 															: <div className="v mem-g-quiet">{w.recorded ? "no change recorded" : "no history yet"}</div>}
@@ -843,7 +1258,7 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 												)}
 											</div>
 											{mem && (
-												<div className="mem-budget" title="This exxpert's memory against its advisory budget from room settings. The budget is a ceiling, not a goal.">
+												<div className={`mem-budget${past ? " mem-g-today" : ""}`} title="This exxpert's memory against its advisory budget from room settings. The budget is a ceiling, not a goal. Today's figure, not time-travelled.">
 													<div className="mem-budget-line">
 														<span>Memory budget</span>
 														<strong className={over ? "over" : ""}>{pct}% of {fmtTok(mem.budgetTokens)} tok{mem.budgetCustomized ? "" : " (default)"}</strong>
@@ -853,15 +1268,16 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 													</div>
 												</div>
 											)}
+											{past && <div className="mem-today-note">Figures with the dotted edge are today's; distillation, the 7-day change and the budget cannot be re-derived for a past day.</div>}
 										</div>
 									);
 								})()}
 								<div className="chart-block mem-detail-graph">
 									<div className="chart-head"><h2>Learning curve</h2></div>
-									<div className="sub" style={{ marginBottom: 8 }}>How this exxpert's memory has grown, event by event. Hover any point for details.</div>
+									<div className="sub" style={{ marginBottom: 8 }}>How this exxpert's memory has grown, event by event. Hover any point for details.{detail.series.length >= 2 ? " Click anywhere on the curve to view the memory as it was then." : ""}</div>
 									{detail.series.length >= 2 ? (
 										<>
-											<BreakdownChart series={detail.series} height={300} />
+											<BreakdownChart series={detail.series} height={300} markerTs={past ? past.at : null} onPickTs={setTimeTravel} />
 											<div className="mem-comp-legend" style={{ marginTop: 8 }}>
 												<span><span className="sw" style={{ background: "var(--fg)", opacity: 0.35 }} />Deep memory</span>
 												<span><span className="sw" style={{ background: "var(--exx-plan)" }} />Recent sessions</span>
@@ -881,17 +1297,25 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 											</div>
 										);
 									})()}
+									
 								</div>
+								
 							<div className="chart-grid">
 								<div className="chart-block">
-									<div className="chart-head"><h2>Memory map</h2></div>
-									<div className="sub" style={{ marginBottom: 6 }}>Composition by estimated token weight. Click a section to read what's inside.</div>
-									{detail.memoryMap.length === 0 && <div className="sub">No structured memory yet.</div>}
+									<div className="dash-section-head" style={{ marginBottom: 0 }}>
+										<div className="chart-head mem-head-row"><h2>Memory map</h2>{past && <span className="mem-asof">as of {fmtDayShort(past.at)}</span>}</div>
+										<div className="mem-panel-actions">
+											<button type="button" className="mem-close" onClick={openFullMemory}>Read all →</button>
+										</div>
+									</div>
+									<div className="sub" style={{ marginBottom: 6 }}>{past ? "Composition that day, same measuring as today. Click a section to read what it held." : "Composition by estimated token weight. Click a section to read what's inside."}</div>
+									{(past ? past.memoryMap : detail.memoryMap).length === 0 && <div className="sub">No structured memory yet.</div>}
 									{(() => {
-										const mx = Math.max(1, ...detail.memoryMap.map((m) => m.estimatedTokens));
-										return detail.memoryMap.map((m) => {
+										const rows = past ? past.memoryMap : detail.memoryMap;
+										const mx = Math.max(1, ...rows.map((m) => m.estimatedTokens));
+										return rows.map((m) => {
 											const isRc = m.area.startsWith("Recent sessions");
-											const selArea = isRc ? areaSel === null : areaSel?.area === m.area;
+											const selArea = isRc ? panel === null : panel?.kind === "area" && panel.area === m.area;
 											return (
 												<div
 													key={m.area}
@@ -902,7 +1326,7 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 													onClick={() => openArea(m.area)}
 													onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openArea(m.area); } }}
 												>
-													<div className="name">{m.area}</div>
+													<div className="name">{isRc ? `Recent sessions ${past ? past.recentSessions.length : detail.sessions}/${detail.sessionsCap}` : m.area}</div>
 													<div className="bar-track"><div className="bar-fill" style={{ width: `${(m.estimatedTokens / mx) * 100}%` }} /></div>
 													<div className="pct">{fmtTok(m.estimatedTokens)} tok</div>
 													<div className="num">{m.words} word{m.words === 1 ? "" : "s"}</div>
@@ -912,36 +1336,242 @@ export function Memory({ onMaintain, maintainBlocked }: { onMaintain?: (target: 
 									})()}
 								</div>
 								<div className="chart-block">
-									{areaSel ? (
-										<>
-											<div className="dash-section-head" style={{ marginBottom: 0 }}>
-												<div className="chart-head"><h2>{areaSel.area}</h2></div>
-												<button type="button" className="mem-close" onClick={() => setAreaSel(null)}>Back ×</button>
-											</div>
-											<div className="sub" style={{ marginBottom: 6 }}>What this exxpert holds in {areaSel.area}, word for word. Read-only.</div>
-											<div className="mem-area-content md assistant-markdown">
-												<MarkdownRenderer>{areaSel.content || "*This section is empty right now.*"}</MarkdownRenderer>
-											</div>
-										</>
-									) : (
-										<>
-											<div className="chart-head"><h2>Recent sessions</h2></div>
-											<div className="sub" style={{ marginBottom: 6 }}>Memories from recent sessions your exxpert hasn't learned from yet. Newest first.</div>
-											{detail.recentSessions.length === 0 && (
-												<div className="sub">{detail.checkpoints > 0 ? "All caught up. Your exxpert has learned every recent session into deep memory." : "No memories yet. This exxpert hasn't had a session."}</div>
-											)}
-											<div className="mem-learned">
-												{detail.recentSessions.map((s, i) => (
-													<div key={i} className="mem-li">
-														<div className="mem-li-txt">{s.title}</div>
-														<div className="mem-li-src">{fmtTok(s.tokens)} tok{s.ts ? ` · ${fmtAgo(s.ts)}` : ""}</div>
+									{(() => {
+										// The reading panel: recent sessions by default, an area's
+										// content, or the stored conversation behind a receipt. One
+										// body, rendered inline here and again inside the
+										// full-screen overlay when expanded.
+										const panelHead = (title: string, caption: string, asOf = false) => (
+											<>
+												<div className="dash-section-head" style={{ marginBottom: 0 }}>
+													<div className="chart-head mem-head-row"><h2>{title}</h2>{asOf && past && <span className="mem-asof">as of {fmtDayShort(past.at)}</span>}</div>
+													<div className="mem-panel-actions">
+														<button type="button" className="mem-close" onClick={() => setPanelFull(!panelFull)}>{panelFull ? "Exit full screen" : "Full screen ⤢"}</button>
+														<button type="button" className="mem-close" onClick={() => { panelReq.current++; setPanel(null); }}>Back ×</button>
 													</div>
-												))}
-											</div>
-										</>
-									)}
+												</div>
+												<div className="sub" style={{ marginBottom: 6 }}>{caption}</div>
+											</>
+										);
+										const body = panel?.kind === "transcript" ? (
+											<>
+												{panelHead("Conversation", `The conversation "${panel.title}" was saved from, as stored on your machine. Read-only.`)}
+												{panel.state === "loading" && <div className="sub">Opening the conversation…</div>}
+												{panel.state === "error" && <div className="sub">Couldn't read this conversation right now.</div>}
+												{panel.state === "ready" && !panel.data.stored && <div className="sub">This conversation is no longer stored.</div>}
+												{panel.state === "ready" && panel.data.stored && (() => {
+													const data = panel.data;
+													const shown = trAll ? data.items : data.items.slice(0, 40);
+													return (
+														<div className="mem-tr">
+															{shown.map((it, i) => {
+																if (it.kind === "tool") {
+																	const open = openTools.has(i);
+																	return (
+																		<div key={i} className="mem-tr-tool">
+																			<button
+																				type="button"
+																				className="mem-tr-tool-line"
+																				aria-expanded={open}
+																				onClick={() => setOpenTools((prev) => { const next = new Set(prev); if (open) next.delete(i); else next.add(i); return next; })}
+																			>
+																				<span className="mem-tr-caret">{open ? "▾" : "▸"}</span>
+																				<span className="mem-tr-tool-name">{it.name}</span>
+																				{it.status && <span className="mem-tr-tool-status">{it.status}</span>}
+																			</button>
+																			{open && (
+																				<div className="mem-tr-tool-detail">
+																					{it.args && <pre className="mem-tr-pre">{it.args}</pre>}
+																					{it.result && <pre className="mem-tr-pre">{it.result}</pre>}
+																					{it.truncated && <div className="mem-tr-note">Long values are shortened in this view.</div>}
+																				</div>
+																			)}
+																		</div>
+																	);
+																}
+																if (it.kind === "user") {
+																	return (
+																		<div key={i} className="mem-tr-user">
+																			<span className="mem-tr-who">You</span>
+																			<div className="mem-tr-text">{it.text}</div>
+																		</div>
+																	);
+																}
+																return (
+																	<div key={i} className={it.kind === "system" ? "mem-tr-system" : "mem-tr-assistant"}>
+																		<div className="md assistant-markdown"><MarkdownRenderer>{it.text ?? ""}</MarkdownRenderer></div>
+																	</div>
+																);
+															})}
+															{!trAll && data.items.length > shown.length && (
+																<button type="button" className="mem-hist-more" onClick={() => setTrAll(true)}>Show all {data.items.length} items</button>
+															)}
+															{data.itemsTotal > data.items.length && (
+																<div className="mem-tr-note">Showing the first {data.items.length} of {data.itemsTotal} stored items.</div>
+															)}
+														</div>
+													);
+												})()}
+											</>
+										) : panel?.kind === "area" ? (
+											<>
+												{panelHead(panel.area, past ? `What this exxpert held in ${panel.area} that day, word for word. Read-only.` : `What this exxpert holds in ${panel.area}, word for word. Read-only.`, true)}
+												<div className="mem-area-content md assistant-markdown">
+													<MarkdownRenderer>{panel.content || "*This section is empty right now.*"}</MarkdownRenderer>
+												</div>
+											</>
+										) : (
+											<>
+												<div className="dash-section-head" style={{ marginBottom: 0 }}>
+													<div className="chart-head mem-head-row"><h2>Recent sessions</h2>{past && <span className="mem-asof">as of {fmtDayShort(past.at)}</span>}</div>
+													<div className="mem-panel-actions">
+														<button type="button" className="mem-close" onClick={() => setPanelFull(!panelFull)}>{panelFull ? "Exit full screen" : "Full screen ⤢"}</button>
+													</div>
+												</div>
+												<div className="sub" style={{ marginBottom: 6 }}>{past ? "What was waiting to be learned that day. Newest first." : "Memories from recent sessions your exxpert hasn't learned from yet. Newest first."}</div>
+												{(past ? past.recentSessions : detail.recentSessions).length === 0 && (
+													<div className="sub">{past ? "No sessions were waiting to be learned that day." : detail.checkpoints > 0 ? "All caught up. Your exxpert has learned every recent session into deep memory." : "No memories yet. This exxpert hasn't had a session."}</div>
+												)}
+												<div className="mem-learned">
+													{(past ? past.recentSessions : detail.recentSessions).map((s, i) => (
+														<div key={i} className="mem-li">
+															<div className="mem-li-txt">{s.title}</div>
+															<div className="mem-li-src">
+																{fmtTok(s.tokens)} tok{s.ts ? ` · ${fmtAgo(s.ts)}` : ""}
+																{(s.content || s.approvedAt) && (
+																	<button
+																		type="button"
+																		className="mem-prov-toggle"
+																		aria-expanded={receiptIdx === i}
+																		onClick={() => setReceiptIdx(receiptIdx === i ? null : i)}
+																	>
+																		{receiptIdx === i ? "Hide details" : "Details"}
+																	</button>
+																)}
+															</div>
+															{receiptIdx === i && (
+																// Details = what the room saved, word for word, plus the
+																// receipt. The receipt states only what the checkpoint event
+																// record proves: the exact time the entry passed the gate —
+																// and it opens the stored conversation only while the
+																// closed-thread file actually exists.
+																<div className="mem-prov-open">
+																	{s.content && (
+																		<div className="mem-prov-body md assistant-markdown">
+																			<MarkdownRenderer>{s.content}</MarkdownRenderer>
+																		</div>
+																	)}
+																	{s.approvedAt && (
+																		<div className="mem-prov">
+																			saved to memory {fmtWhen(s.approvedAt)} through the checkpoint gate
+																			{s.conversation && s.checkpointId && (
+																				<>
+																					{" · "}
+																					<button type="button" className="mem-prov-link" onClick={() => openConversation(s)}>open the conversation</button>
+																				</>
+																			)}
+																		</div>
+																	)}
+																</div>
+															)}
+														</div>
+													))}
+												</div>
+											</>
+										);
+										if (panelFull) {
+											return (
+												<>
+													<div className="sub">Reading in full screen.</div>
+													<div className="mem-fullscreen" role="dialog" aria-modal="true" aria-label="Memory reading panel, full screen">
+														<div className="mem-fullscreen-inner chart-block">{body}</div>
+													</div>
+												</>
+											);
+										}
+										return body;
+									})()}
 								</div>
 							</div>
+							{(detail.history ?? []).length > 0 && (
+								<div className="chart-block mem-history">
+									<div className="chart-head"><h2>Memory history</h2></div>
+									<div className="sub" style={{ marginBottom: 6 }}>How this exxpert's memory has changed, from its own event records. Newest first. Read-only.{ttValue !== null ? " Events after the viewed moment had not happened yet." : ""}</div>
+									{(histAll ? detail.history : detail.history.slice(0, 10)).map((e, i, arr) => (
+										<div key={i} className={`mem-hist-item${ttValue !== null && e.ts > ttValue ? " mem-hist-future" : ""}`}>
+											{ttValue !== null && e.ts <= ttValue && (i === 0 || arr[i - 1].ts > ttValue) && (
+												<div className="mem-youare">you are viewing here</div>
+											)}
+											<div className="mem-hist-row" title={fmtWhen(new Date(e.ts).toISOString())}>
+												<span className="mem-hist-date">{fmtDayShort(e.ts)}</span>
+												<span className="mem-hist-kind">{e.kind === "checkpoint" ? "Checkpoint" : e.kind === "learn" ? "Learn" : "Review"}</span>
+												<span className="mem-hist-what">{historyText(e)}</span>
+												{e.diffable && e.id && (e.kind === "learn" || e.kind === "review") && (
+													<button type="button" className="mem-prov-toggle mem-hist-details" aria-expanded={diffOpen === e.id} onClick={() => toggleDiff(e)}>
+														{diffOpen === e.id ? "Hide details" : "Details"}
+													</button>
+												)}
+											</div>
+											{e.id != null && diffOpen === e.id && (() => {
+												// Before/after from the event's own stored snapshots —
+												// changed lines with context, grouped by memory section.
+												const st = diffs[e.id!];
+												if (!st || st.state === "loading") return <div className="sub mem-diff-note">Reading the stored snapshots…</div>;
+												if (st.state === "error") return <div className="sub mem-diff-note">Couldn't read the snapshots for this event right now.</div>;
+												const sections = openDiffSections ?? [];
+												const body = (
+													<div className="mem-diff">
+														<div className="mem-diff-meta">
+															<span className="sub">
+																What this {e.kind === "learn" ? "Learn" : "Review"} changed, grouped by memory section from its stored before/after snapshots. Removed lines are struck, added lines marked +.
+																{st.data.afterVerified === false ? " The after side is the next recorded state, which may include changes beyond this event." : ""}
+															</span>
+															<button type="button" className="mem-close" onClick={() => setDiffFull(!diffFull)}>{diffFull ? "Exit full screen" : "Full screen \u2922"}</button>
+														</div>
+														{sections.length === 0 && <div className="sub">The memory text is unchanged.</div>}
+														{sections.map((sec, k) => (
+															<div key={k} className="mem-diff-hunk">
+																<div className="mem-diff-sec">
+																	<span>{sec.section}</span>
+																	<span className="mem-diff-sec-tok">{fmtTok(sec.beforeTokens)} to {fmtTok(sec.afterTokens)} tok</span>
+																</div>
+																<div className="mem-diff-lines">
+																	{sec.hunks.map((h, hk) => (
+																		<div key={hk} className="mem-diff-hunk-lines">
+																			{h.lines.map((l, j) => (
+																				<div key={j} className={`mem-diff-line ${l.type}`}>
+																					<span className="mem-diff-mark">{l.type === "add" ? "+" : l.type === "del" ? "\u2212" : " "}</span>
+																					<span className="mem-diff-text">{l.text || " "}</span>
+																				</div>
+																			))}
+																		</div>
+																	))}
+																</div>
+															</div>
+														))}
+													</div>
+												);
+												if (diffFull) {
+													return (
+														<>
+															<div className="sub mem-diff-note">Reading in full screen.</div>
+															<div className="mem-fullscreen" role="dialog" aria-modal="true" aria-label="Memory change, full screen">
+																<div className="mem-fullscreen-inner chart-block">{body}</div>
+															</div>
+														</>
+													);
+												}
+												return body;
+											})()}
+										</div>
+									))}
+									{detail.history.length > 10 && (
+										<button type="button" className="mem-hist-more" onClick={() => setHistAll((v) => !v)}>
+											{histAll ? "Show fewer" : `Show all ${detail.history.length}`}
+										</button>
+									)}
+								</div>
+							)}
 						</section>
 					)}
 				</>

@@ -3,6 +3,7 @@ import type { PersistentAgentStatus } from "../types";
 import { fetchPersistentRoomSkillSettings, updatePersistentRoomSkillSetting, type PersistentRoomEnabledSkillStatus } from "../persistent-room-management-api";
 import { fetchSkill, fetchSkills, type SkillDetail, type SkillListItem } from "../skills-api";
 import { MarkdownRenderer } from "./Markdown";
+import { RsInfo } from "./rs-info";
 
 /**
  * Room settings wheel — Skills panel (skills MR-5, spec §4/§5; enabled-first
@@ -80,22 +81,30 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 		return rest.filter((skill) => `${skill.displayName ?? ""} ${skill.name} ${skill.description}`.toLowerCase().includes(q));
 	}, [library, enabledNames, query]);
 
-	if (error && library === null) return <div className="checkpoint-proposal-error">{error}</div>;
-	if (library === null || enabled === null) return <p className="ai-setup-copy">Loading skills…</p>;
-
-	const okCount = enabled.filter((skill) => skill.status === "ok").length;
+	const okCount = (enabled ?? []).filter((skill) => skill.status === "ok").length;
+	const loaded = library !== null && enabled !== null;
 
 	return (
 		<div className="room-skills-section">
-			{library.length === 0 && enabled.length === 0 && (
+			<header className="rs-pane-head">
+				<h3>Skills</h3>
+				{loaded && library.length > enabledNames.size && !pickerOpen && (
+					<div className="rs-pane-actions">
+						<button className="rs-btn" onClick={() => { setPickerOpen(true); setQuery(""); }}>Enable skills…</button>
+					</div>
+				)}
+			</header>
+			<p className="rs-pane-sub">
+				{okCount > 0 ? `${okCount} enabled, ~${okCount * 100} tokens per turn.` : "Abilities this room can use in its turns."}
+				<RsInfo text="Each enabled skill adds a ~100-token index entry to every turn of this room. Bodies load on demand and are never memorized. Enabling or disabling takes effect the next time you open this room; a changed or removed skill stops being injected immediately." />
+			</p>
+			{error && library === null && <div className="checkpoint-proposal-error">{error}</div>}
+			{!loaded && error === null && <p className="ai-setup-copy">Loading skills…</p>}
+			{loaded && library.length === 0 && enabled.length === 0 && (
 				<p className="ai-setup-copy">No skills in your library yet. Add them under Skills in the sidebar. Every skill passes a review before it can be enabled here.</p>
 			)}
-			{(library.length > 0 || enabled.length > 0) && (
+			{loaded && (library.length > 0 || enabled.length > 0) && (
 				<>
-					<p className="ai-setup-copy">
-						Enabled skills add a ~100-token index entry to every turn of this room
-						{okCount > 0 ? <> (currently {okCount} enabled ≈ ~{okCount * 100} tokens)</> : null}. Bodies load on demand and are never memorized.
-					</p>
 					{error && <div className="checkpoint-proposal-error">{error}</div>}
 					{reviewing && (
 						<div className="room-skills-review">
@@ -113,10 +122,10 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 								<MarkdownRenderer>{reviewing.body}</MarkdownRenderer>
 							</div>
 							<div className="room-skills-row-actions">
-								<button className="landing-action" disabled={busyName === reviewing.name} onClick={() => void toggle(reviewing.name, "enable")}>
+								<button className="rs-btn" disabled={busyName === reviewing.name} onClick={() => void toggle(reviewing.name, "enable")}>
 									{busyName === reviewing.name ? "Re-enabling…" : "I reviewed the change: re-enable"}
 								</button>
-								<button className="landing-action secondary" onClick={() => setReviewing(null)}>Cancel</button>
+								<button className="rs-quiet" onClick={() => setReviewing(null)}>Cancel</button>
 							</div>
 						</div>
 					)}
@@ -130,10 +139,13 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 							return (
 								<div key={state.name} className="room-skills-row">
 									<div className="room-skills-row-main">
-										<span className="room-skills-name">{entry?.displayName || state.name}</span>
-										{entry?.description && <span className="room-skills-desc">{entry.description}</span>}
+										<span className="room-skills-name-row">
+											<span className="room-skills-name">{entry?.displayName || state.name}</span>
+											{isOk && <span className="room-skills-live">active</span>}
+										</span>
+										{entry?.description && <span className="room-skills-desc" title={entry.description}>{entry.description}</span>}
 										{state.status === "hash-mismatch" && (
-											<span className="room-skills-warn">Changed since you enabled it. It stopped injecting. Review the new version before re-enabling.</span>
+											<span className="room-skills-warn">Changed since you enabled it. It stopped injecting until you review the new version.</span>
 										)}
 										{state.status === "missing" && (
 											<span className="room-skills-warn">Removed from the library. No longer injected. Remove to clear, or re-import and re-enable.</span>
@@ -141,24 +153,18 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 									</div>
 									<div className="room-skills-row-actions">
 										{state.status === "hash-mismatch" && (
-											<button className="landing-action secondary" disabled={reviewLoadingName === state.name} onClick={() => void openReview(state.name)}>
+											<button className="rs-btn" disabled={reviewLoadingName === state.name} onClick={() => void openReview(state.name)}>
 												{reviewLoadingName === state.name ? "Loading…" : "Review changes"}
 											</button>
 										)}
-										<button className="landing-action secondary" disabled={busyName === state.name} onClick={() => void toggle(state.name, "disable")}>
+										<button className="rs-quiet" disabled={busyName === state.name} onClick={() => void toggle(state.name, "disable")}>
 											{busyName === state.name ? "Removing…" : "Remove"}
 										</button>
-										{isOk && <span className="room-skills-live">active</span>}
 									</div>
 								</div>
 							);
 						})}
 					</div>
-					{library.length > enabledNames.size && !pickerOpen && (
-						<button className="landing-action secondary room-skills-add" onClick={() => { setPickerOpen(true); setQuery(""); }}>
-							Enable skills…
-						</button>
-					)}
 					{pickerOpen && (
 						<div className="room-skills-picker">
 							<div className="room-skills-picker-head">
@@ -181,7 +187,7 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 											{skill.description && <span className="room-skills-desc">{skill.description}</span>}
 										</div>
 										<div className="room-skills-row-actions">
-											<button className="landing-action secondary" disabled={busyName === skill.name} onClick={() => void toggle(skill.name, "enable")}>
+											<button className="rs-btn" disabled={busyName === skill.name} onClick={() => void toggle(skill.name, "enable")}>
 												{busyName === skill.name ? "Enabling…" : "Enable"}
 											</button>
 										</div>
@@ -190,7 +196,6 @@ export function RoomSkillsSection({ status }: { status: PersistentAgentStatus })
 							</div>
 						</div>
 					)}
-					<p className="cli-note">Enabling or disabling a skill takes effect the next time you open this room; a changed or removed skill stops being injected immediately.</p>
 				</>
 			)}
 		</div>

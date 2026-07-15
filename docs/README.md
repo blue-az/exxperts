@@ -4,12 +4,12 @@ This is the canonical index for documentation in this repository. Treat this pag
 
 ## Start here
 
-- [Quickstart](quickstart.md) — install, connect your AI, first room, first memory; plus backup/move and uninstall. All platforms.
-- [How Exxperts works](how-exxperts-works.md) — what the product is and how the pieces fit; the right orientation read.
-- [Memory](memory.md) — how room memory (checkpoint → Learn → Review Memory) and CLI memory work, what is stored where, and who approves it.
-- [Provider setup and AI profiles](provider-setup.md) — connecting a provider: in-app sign-in for Claude / ChatGPT Plus/Pro, and the OpenAI-compatible gateway path.
-- [Web search](web-search.md) — SearXNG setup, keeping it running, and configuration reference.
-- [MCP client support](mcp.md) — MCP connectors: transports, config locations, and commands.
+- [Quickstart](quickstart.md): install, connect your AI, first room, first memory; plus backup/move and uninstall. All platforms.
+- [How Exxperts works](how-exxperts-works.md): what the product is and how the pieces fit; the right orientation read.
+- [Memory](memory.md): how room memory (checkpoint → Learn → Review Memory) and CLI memory work, what is stored where, and who approves it.
+- [Provider setup and AI profiles](provider-setup.md): connecting a provider: in-app sign-in for Claude / ChatGPT Plus/Pro, and the OpenAI-compatible gateway path.
+- [Web search](web-search.md): SearXNG setup, keeping it running, and configuration reference.
+- [MCP client support](mcp.md): MCP connectors: transports, config locations, and commands.
 
 ## Current command and storage truth
 
@@ -34,10 +34,10 @@ If another active doc conflicts with this table, treat this table as the newer s
 
 ## Developer and packaging docs
 
-- [Developer guide](developer.md) — primary developer guide with current command and storage-root guidance.
-- [Operations](operations.md) — support/troubleshooting notes with current repo/dev command and storage-root guidance.
-- [Local npm packaging](packaging-local.md) — package and tarball validation.
-- [Architecture](architecture.md) — small landing placeholder pointing at the current guides.
-- [L1a constitution upgrade](l1a-constitution-upgrade.md) — how to upgrade existing rooms to a newer constitution template after pulling an update.
+- [Developer guide](developer.md): primary developer guide with current command and storage-root guidance.
+- [Operations](operations.md): support/troubleshooting notes with current repo/dev command and storage-root guidance.
+- [Local npm packaging](packaging-local.md): package and tarball validation.
+- [Architecture](architecture.md): small landing placeholder pointing at the current guides.
+- [L1a constitution upgrade](l1a-constitution-upgrade.md): how to upgrade existing rooms to a newer constitution template after pulling an update.
 
 A current public extension/developer-extension guide does not exist yet. Historical extension notes were archived and should not be treated as current launcher, storage, or provider guidance.

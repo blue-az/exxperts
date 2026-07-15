@@ -1,7 +1,7 @@
 # Web search (SearXNG)
 
 Web search ships **disabled**; agents say "not configured" until you turn it
-on. It then runs through a local SearXNG container — no API key and no
+on. It then runs through a local SearXNG container: no API key and no
 third-party search SaaS.
 
 **Privacy note:** SearXNG forwards your search **queries** to public search
@@ -11,7 +11,7 @@ client/internal content.
 
 ## Setup
 
-1. **Install a container engine** (one-time, like installing Node — it can't
+1. **Install a container engine** (one-time, like installing Node; it can't
    be bundled). Get [Docker Desktop](https://www.docker.com/products/docker-desktop/)
    (macOS/Windows/Linux) or, lighter on macOS, [OrbStack](https://orbstack.dev).
    Open it so it's running, and set it to **start at login** so search keeps
@@ -27,7 +27,7 @@ client/internal content.
 3. **Restart the app** (`exxperts web`, `exxperts cli`, `./scripts/exxperts-web`,
    or `./scripts/exxperts-cli`).
 
-That's it — web search now works in both the web UI and the CLI, however you
+That's it: web search now works in both the web UI and the CLI, however you
 launch them.
 
 ## How it works (and keeping it running)
@@ -37,13 +37,13 @@ engine (OrbStack or Docker Desktop) is running. So the rule is simple:
 
 - **Engine running → search works. Engine quit → search stops.**
 
-You do **not** need a terminal open or to keep clicking anything — the engine
+You do **not** need a terminal open or to keep clicking anything; the engine
 is a quiet background/menu-bar app. You just need it alive. To make this
 effortless:
 
 - **Turn on "Start at login"** in OrbStack/Docker settings. Then after any
   reboot the engine starts automatically, and our container is set to
-  **restart with it** (`--restart unless-stopped`) — so search comes back on
+  **restart with it** (`--restart unless-stopped`), so search comes back on
   its own, no command needed.
 
 The only time search stops is if the engine is **not running** (someone quit
@@ -59,7 +59,7 @@ Other commands: `./scripts/searxng stop` / `restart`. The setup command never
 overwrites an existing config, so re-running `start` is always safe.
 `npm run doctor` from the repo root also checks reachability.
 
-**Windows.** The helper is cross-platform Node — run
+**Windows.** The helper is cross-platform Node; run
 `node scripts\searxng.mjs <start|stop|restart|status>` from PowerShell, cmd, or
 Git Bash. (Docker Desktop with the WSL2 backend works well here.)
 
@@ -69,4 +69,4 @@ The helper writes `~/.exxperts/app/web-search.json` if no web-search config
 exists yet, plus generated SearXNG settings to
 `~/.exxperts/app/searxng/settings.yml` (JSON output enabled, because
 `web_search` calls `/search?format=json`). Environment variables override the
-shared config — see [`operations.md`](operations.md) for `EXXETA_SEARCH_*`.
+shared config; see [`operations.md`](operations.md) for `EXXETA_SEARCH_*`.

@@ -14,8 +14,8 @@ bin/                 Packaged bin shim: exxperts (plus direct-node dev entry poi
 docs/                Product, architecture, ops, demo, collaboration docs
 ```
 
-For the product architecture — rooms, prompt layers, and the memory
-lifecycle — start with [`how-exxperts-works.md`](how-exxperts-works.md).
+For the product architecture (rooms, prompt layers, and the memory
+lifecycle), start with [`how-exxperts-works.md`](how-exxperts-works.md).
 
 ## Developer commands
 
@@ -48,7 +48,7 @@ cd ..
 
 There are two loops; keep them separate:
 
-1. **Repo development loop** — use this while building features.
+1. **Repo development loop**: use this while building features.
    ```bash
    npm install
    npm run build
@@ -57,7 +57,7 @@ There are two loops; keep them separate:
    ```
    These repo scripts are dev-only fallbacks and continue to work. Packaging cleanup does not make normal product development harder.
 
-2. **Installed product loop** — use this when validating what an evaluator/user will run.
+2. **Installed product loop**: use this when validating what an evaluator/user will run.
    ```bash
    npm run build
    npm pack
@@ -84,9 +84,9 @@ After code changes, rebuild/repack/reinstall only when you need to test installe
 
 ## How prompts are assembled
 
-**Persistent rooms (web)** boot from four code-assembled layers — L0
+**Persistent rooms (web)** boot from four code-assembled layers (L0
 platform kernel, L1a constitution, L1b durable memory, L2 runtime
-envelope — built in `apps/web-server/src/persistent-agents.ts`. No
+envelope) built in `apps/web-server/src/persistent-agents.ts`. No
 Markdown prompt files are involved; the code is the source of truth.
 See [`how-exxperts-works.md`](how-exxperts-works.md) for the layer
 model.
@@ -108,7 +108,7 @@ permissions/content-policy extensions.
 
 Current product/app state lives under `~/.exxperts/app/`, including:
 
-- `personalized-agents/<id>/` — persistent rooms: L1b memory, archives, event records, threads
+- `personalized-agents/<id>/`: persistent rooms (L1b memory, archives, event records, threads)
 - `conversations/`
 - `persistent-room-schedules/` and `background-runs/`
 - `persistent-agent-ai-profile.json` (active AI profile) and `openai-compatible-ai-profile.json` (gateway policy, when configured)
@@ -137,9 +137,9 @@ See [`packaging-local.md`](packaging-local.md) for packaging validation commands
 
 ## Related docs
 
-- [`how-exxperts-works.md`](how-exxperts-works.md) — product architecture: rooms, prompt layers, memory lifecycle.
-- [`memory.md`](memory.md) — user-facing memory walkthrough (rooms + CLI).
-- [`l1a-constitution-upgrade.md`](l1a-constitution-upgrade.md) — constitution versioning/migration.
-- [`provider-setup.md`](provider-setup.md) — AI profiles and provider setup.
+- [`how-exxperts-works.md`](how-exxperts-works.md): product architecture: rooms, prompt layers, memory lifecycle.
+- [`memory.md`](memory.md): user-facing memory walkthrough (rooms + CLI).
+- [`l1a-constitution-upgrade.md`](l1a-constitution-upgrade.md): constitution versioning/migration.
+- [`provider-setup.md`](provider-setup.md): AI profiles and provider setup.
 - [`mcp.md`](mcp.md)
 - Historical extension and collaboration notes are in the [active docs surface cleanup archive](archive/2026-06-24-active-docs-surface-cleanup/README.md).

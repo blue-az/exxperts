@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import type { PersistentAgentArchiveResponse, PersistentAgentId, PersistentAgentRenameMemoryMention, PersistentAgentRenameResponse, PersistentAgentStatus } from "../types";
 import { renamePersistentRoom } from "../persistent-room-management-api";
 import { RoomSessionSection } from "./RoomSessionSection";
@@ -13,9 +13,47 @@ function roomStatusLabel(status: PersistentAgentStatus["status"]): string {
 	return status === "needs_absorb" ? "ready to learn" : status;
 }
 
+type SettingsPane = "workspace" | "memory" | "skills" | "schedules" | "session" | "danger";
+
+const PANES: { id: SettingsPane; label: string }[] = [
+	{ id: "workspace", label: "Workspace" },
+	{ id: "memory", label: "Memory" },
+	{ id: "skills", label: "Skills" },
+	{ id: "schedules", label: "Scheduled tasks" },
+	{ id: "session", label: "Session" },
+];
+
+// Bold the occurrences the rename will actually replace: the server matches the
+// old name case-sensitively at word boundaries, so the preview must do the same.
+function isNameMentionBoundary(char: string | undefined): boolean {
+	if (char === undefined) return true;
+	return !/[\p{L}\p{N}]/u.test(char);
+}
+
+function highlightMention(text: string, name: string): ReactNode {
+	if (!name) return text;
+	const parts: ReactNode[] = [];
+	let from = 0;
+	for (let hit = text.indexOf(name, from); hit !== -1; hit = text.indexOf(name, from)) {
+		const isMention = isNameMentionBoundary(text[hit - 1]) && isNameMentionBoundary(text[hit + name.length]);
+		if (isMention) {
+			if (hit > from) parts.push(text.slice(from, hit));
+			parts.push(<b key={parts.length}>{text.slice(hit, hit + name.length)}</b>);
+			from = hit + name.length;
+		} else {
+			// Not a whole-name mention: leave this occurrence unhighlighted.
+			parts.push(text.slice(from, hit + name.length));
+			from = hit + name.length;
+		}
+	}
+	if (from < text.length) parts.push(text.slice(from));
+	return parts.length > 0 ? parts : text;
+}
+
 export function RoomSettingsModal({ status, onClose, onArchive, onRefresh }: { status: PersistentAgentStatus; onClose: () => void; onArchive: (agentId: PersistentAgentId, confirmation: string) => Promise<PersistentAgentArchiveResponse>; onRefresh: () => void }) {
 	const workspaceDirtyRef = useRef(false);
 	const handleWorkspaceDirtyChange = useCallback((dirty: boolean) => { workspaceDirtyRef.current = dirty; }, []);
+	const [pane, setPane] = useState<SettingsPane>("workspace");
 	const currentName = status.displayName || status.id;
 	const [editingName, setEditingName] = useState(false);
 	const [nameDraft, setNameDraft] = useState("");
@@ -99,7 +137,7 @@ export function RoomSettingsModal({ status, onClose, onArchive, onRefresh }: { s
 	}
 	return (
 		<div className="room-settings-overlay" role="dialog" aria-modal="true" aria-labelledby="room-settings-title" onClick={requestClose}>
-			<div className="room-settings-modal" onClick={(e) => e.stopPropagation()}>
+			<div className="room-settings-modal rs-shell" onClick={(e) => e.stopPropagation()}>
 				<div className="room-settings-head">
 					<div className="room-settings-title-block">
 						<div className="agent-details-kicker">Room settings</div>
@@ -117,24 +155,24 @@ export function RoomSettingsModal({ status, onClose, onArchive, onRefresh }: { s
 									/>
 									{renamePreview === null && (
 										<>
-											<button className="inline-action" type="submit" disabled={!canSaveName}>{renaming ? "Checking…" : "Save"}</button>
-											<button className="inline-action" type="button" disabled={renaming} onClick={cancelNameEdit}>Cancel</button>
+											<button className="rs-btn" type="submit" disabled={!canSaveName}>{renaming ? "Checking…" : "Save"}</button>
+											<button className="rs-quiet" type="button" disabled={renaming} onClick={cancelNameEdit}>Cancel</button>
 										</>
 									)}
 								</form>
 								{renamePreview !== null && (
 									<div className="room-settings-rename-preview">
 										<p className="room-settings-rename-preview-lead">
-											This also updates {renamePreview.mentions.length} {renamePreview.mentions.length === 1 ? "mention" : "mentions"} in the room's memory:
+											Rename <b>{currentName}</b> to <b>{renamePreview.name}</b>. This also updates {renamePreview.mentions.length} {renamePreview.mentions.length === 1 ? "mention" : "mentions"} in the room's memory:
 										</p>
 										<ul className="room-settings-rename-preview-lines">
 											{renamePreview.mentions.map((mention, index) => (
-												<li key={`${mention.line}-${index}`}>{mention.text}</li>
+												<li key={`${mention.line}-${index}`}>{highlightMention(mention.text, currentName)}</li>
 											))}
 										</ul>
 										<div className="room-settings-rename-preview-actions">
-											<button className="inline-action" type="button" disabled={renaming} onClick={() => void applyRename()}>{renaming ? "Applying…" : "Apply"}</button>
-											<button className="inline-action" type="button" disabled={renaming} onClick={cancelRenamePreview}>Cancel</button>
+											<button className="rs-btn" type="button" disabled={renaming} onClick={() => void applyRename()}>{renaming ? "Applying…" : "Apply"}</button>
+											<button className="rs-quiet" type="button" disabled={renaming} onClick={cancelRenamePreview}>Cancel</button>
 										</div>
 									</div>
 								)}
@@ -142,7 +180,7 @@ export function RoomSettingsModal({ status, onClose, onArchive, onRefresh }: { s
 						) : (
 							<div className="room-settings-title-row">
 								<h2 id="room-settings-title">{currentName}</h2>
-								<button className="inline-action room-settings-rename-btn" type="button" aria-label="Rename room" title="Rename this room" onClick={startNameEdit}>Rename</button>
+								<button className="rs-quiet room-settings-rename-btn" type="button" aria-label="Rename room" title="Rename this room" onClick={startNameEdit}>Rename</button>
 								{status.status !== "ready" && (
 									<span className={`room-settings-status ${status.status}`}>{roomStatusLabel(status.status)}</span>
 								)}
@@ -155,30 +193,35 @@ export function RoomSettingsModal({ status, onClose, onArchive, onRefresh }: { s
 					</div>
 					<button className="icon-btn" onClick={requestClose} aria-label="Close">Close</button>
 				</div>
-				<div className="room-settings-body">
-					<section className="room-settings-section">
-						<h3>Workspace</h3>
-						<RoomWorkspaceSection status={status} onDirtyChange={handleWorkspaceDirtyChange} />
-					</section>
-					<section className="room-settings-section">
-						<h3>Memory maintenance</h3>
-						<RoomMaintenanceSection status={status} />
-					</section>
-					<section className="room-settings-section">
-						<h3>Skills</h3>
-						<RoomSkillsSection status={status} />
-					</section>
-					<section className="room-settings-section">
-						<h3>Scheduled tasks</h3>
-						<RoomScheduledTasksSection status={status} />
-					</section>
-					<section className="room-settings-section">
-						<h3>Session</h3>
-						<RoomSessionSection status={status} onRefresh={onRefresh} />
-					</section>
-					<section className="room-settings-section room-settings-footer">
-						<RoomDangerZone status={status} onArchive={archiveAndClose} />
-					</section>
+				<div className="room-settings-layout">
+					<nav className="room-settings-nav" aria-label="Room settings sections">
+						{PANES.map((entry) => (
+							<button key={entry.id} type="button" className={pane === entry.id ? "rs-nav-item active" : "rs-nav-item"} aria-current={pane === entry.id} onClick={() => setPane(entry.id)}>{entry.label}</button>
+						))}
+						<div className="rs-nav-spacer" />
+						<button type="button" className={pane === "danger" ? "rs-nav-item rs-nav-danger active" : "rs-nav-item rs-nav-danger"} aria-current={pane === "danger"} onClick={() => setPane("danger")}>Delete room</button>
+					</nav>
+					{/* Panes stay mounted so each section fetches once and keeps its edit state across switches. */}
+					<div className="room-settings-body">
+						<section className="room-settings-section" hidden={pane !== "workspace"}>
+							<RoomWorkspaceSection status={status} onDirtyChange={handleWorkspaceDirtyChange} />
+						</section>
+						<section className="room-settings-section" hidden={pane !== "memory"}>
+							<RoomMaintenanceSection status={status} />
+						</section>
+						<section className="room-settings-section" hidden={pane !== "skills"}>
+							<RoomSkillsSection status={status} />
+						</section>
+						<section className="room-settings-section" hidden={pane !== "schedules"}>
+							<RoomScheduledTasksSection status={status} />
+						</section>
+						<section className="room-settings-section" hidden={pane !== "session"}>
+							<RoomSessionSection status={status} onRefresh={onRefresh} />
+						</section>
+						<section className="room-settings-section" hidden={pane !== "danger"}>
+							<RoomDangerZone status={status} onArchive={archiveAndClose} />
+						</section>
+					</div>
 				</div>
 			</div>
 		</div>
